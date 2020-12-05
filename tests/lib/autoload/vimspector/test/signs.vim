@@ -1,6 +1,7 @@
 function! vimspector#test#signs#AssertCursorIsAtLineInBuffer( buffer,
                                                             \ line,
                                                             \ column ) abort
+  call WaitFor( {-> bufexists( a:buffer ) } )
   call WaitForAssert( {->
         \ assert_equal( fnamemodify( a:buffer, ':p' ),
         \               fnamemodify( bufname( '%' ), ':p' ),
@@ -15,6 +16,7 @@ function! vimspector#test#signs#AssertCursorIsAtLineInBuffer( buffer,
 endfunction
 
 function! vimspector#test#signs#AssertPCIsAtLineInBuffer( buffer, line ) abort
+  call WaitFor( {-> bufexists( a:buffer ) } )
   let signs = sign_getplaced( a:buffer, {
     \ 'group': 'VimspectorCode',
     \ } )
@@ -32,7 +34,7 @@ function! vimspector#test#signs#AssertPCIsAtLineInBuffer( buffer, line ) abort
   let index = 0
   while index < len( signs[ 0 ].signs )
     let s = signs[ 0 ].signs[ index ]
-    if s.name ==# 'vimspectorPC'
+    if s.name ==# 'vimspectorPC' || s.name ==# 'vimspectorPCBP'
       if assert_false( pc_index >= 0, 'Too many PC signs' )
         return 1
       endif
@@ -46,7 +48,8 @@ endfunction
 
 function! vimspector#test#signs#AssertSignGroupSingletonAtLine( group,
                                                               \ line,
-                                                              \ sign_name )
+                                                              \ sign_name,
+                                                              \ priority )
                                                               \ abort
 
   let signs = sign_getplaced( '%', {
@@ -62,14 +65,54 @@ function! vimspector#test#signs#AssertSignGroupSingletonAtLine( group,
                      \ 'Num signs in ' . a:group . ' at ' . a:line ) ||
        \ assert_equal( a:sign_name,
                      \ signs[ 0 ].signs[ 0 ].name,
-                     \ 'Sign in group ' . a:group . ' at ' . a:line )
+                     \ 'Sign in group ' . a:group . ' at ' . a:line ) ||
+       \ assert_equal( a:priority,
+                     \ signs[ 0 ].signs[ 0 ].priority,
+                     \ 'Sign priority in group ' . a:group . ' at ' . a:line )
 endfunction
 
+
+function! vimspector#test#signs#AssertSignAtLine(
+      \ group,
+      \ line,
+      \ sign_name,
+      \ priority ) abort
+
+  let signs = sign_getplaced( '%', {
+    \ 'group': a:group,
+    \ 'lnum': a:line,
+    \ } )
+
+  let errors_before = v:errors
+  let result = 1
+  let errors = [ 'No signs were found' ]
+
+  for sign in signs[ 0 ].signs
+    let v:errors = []
+
+    let result =
+       \ assert_equal( a:sign_name,
+                     \ sign.name,
+                     \ 'Sign in group ' . a:group . ' at ' . a:line ) ||
+       \ assert_equal( a:priority,
+                     \ sign.priority,
+                     \ 'Sign priority in group ' . a:group . ' at ' . a:line )
+    if result
+      let errors = v:errors
+    else
+      let errors = []
+      break
+    endif
+  endfor
+
+  let v:errors = errors_before + errors
+  return result
+endfunction
 
 function! vimspector#test#signs#AssertSignGroupEmptyAtLine( group, line ) abort
   let signs = sign_getplaced( '%', {
     \ 'group': a:group,
-    \ 'lnum': line( '.' )
+    \ 'lnum': a:line,
     \ } )
 
   return assert_equal( 1,

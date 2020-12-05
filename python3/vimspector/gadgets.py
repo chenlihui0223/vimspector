@@ -157,6 +157,9 @@ GADGETS = {
       "vscode-java": {
         "name": "vscode-java",
         "port": "${DAPPort}",
+        "configuration": {
+          "cwd": "${workspaceRoot}"
+        }
       }
     },
   },
@@ -193,7 +196,7 @@ GADGETS = {
     'language': 'tcl',
     'repo': {
       'url': 'https://github.com/puremourning/TclProDebug',
-      'ref': 'master'
+      'ref': 'v1.0.0'
     },
     'do': lambda name, root, gadget: installer.InstallTclProDebug( name,
                                                                    root,
@@ -225,23 +228,24 @@ GADGETS = {
     'language': 'csharp',
     'enabled': False,
     'download': {
-      'url': 'https://github.com/Samsung/netcoredbg/releases/download/latest/'
-             '${file_name}',
+      'url': ( 'https://github.com/Samsung/netcoredbg/releases/download/'
+               '${version}/${file_name}' ),
       'format': 'tar',
     },
     'all': {
-      'version': 'master'
+      'version': '1.2.0-635'
     },
     'macos': {
-      'file_name': 'netcoredbg-osx-master.tar.gz',
-      'checksum': '',
+      'file_name': 'netcoredbg-osx.tar.gz',
+      'checksum':
+        '71c773e34d358950f25119bade7e3081c4c2f9d71847bd49027ca5792e918beb',
     },
     'linux': {
-      'file_name': 'netcoredbg-linux-master.tar.gz',
+      'file_name': 'netcoredbg-linux-bionic.tar.gz',
       'checksum': '',
     },
     'windows': {
-      'file_name': 'netcoredbg-win64-master.zip',
+      'file_name': 'netcoredbg-win64.zip',
       'checksum': '',
     },
     'do': lambda name, root, gadget: installer.MakeSymlink(
@@ -258,6 +262,9 @@ GADGETS = {
           "pidProperty": "processId",
           "pidSelect": "ask"
         },
+        "configuration": {
+          "cwd": "${workspaceRoot}"
+        }
       },
     }
   },
@@ -273,9 +280,9 @@ GADGETS = {
     },
     'all': {
       'file_name': 'vscode-mono-debug.vsix',
-      'version': '0.15.8',
+      'version': '0.16.2',
       'checksum':
-          '723eb2b621b99d65a24f215cb64b45f5fe694105613a900a03c859a62a810470',
+          '121eca297d83daeeb1e6e1d791305d1827998dbd595c330086b3b94d33dba3b9',
     },
     'adapters': {
       'vscode-mono-debug': {
@@ -287,6 +294,12 @@ GADGETS = {
         "attach": {
           "pidSelect": "none"
         },
+        "configuration": {
+          "cwd": "${workspaceRoot}",
+          "console": "integratedTerminal",
+          "args": [],
+          "env": {}
+        }
       },
     }
   },
@@ -336,22 +349,25 @@ GADGETS = {
   'vscode-go': {
     'language': 'go',
     'download': {
-      'url': 'https://github.com/microsoft/vscode-go/releases/download/'
-             '${version}/${file_name}'
+      'url': 'https://github.com/golang/vscode-go/releases/download/'
+             'v${version}/${file_name}'
     },
     'all': {
-      'version': '0.11.4',
-      'file_name': 'Go-0.11.4.vsix',
+      'version': '0.18.1',
+      'file_name': 'Go-0.18.1.vsix',
       'checksum':
-        'ff7d7b944da5448974cb3a0086f4a2fd48e2086742d9c013d6964283d416027e'
+        '80d4522c6cf482cfa6141997e5b458034f67d7065d92e1ce24a0456c405d6061',
     },
     'adapters': {
       'vscode-go': {
         'name': 'delve',
         'command': [
           'node',
-          '${gadgetDir}/vscode-go/out/src/debugAdapter/goDebug.js'
+          '${gadgetDir}/vscode-go/dist/debugAdapter.js'
         ],
+        "configuration": {
+          "cwd": "${workspaceRoot}",
+        }
       },
     },
   },
@@ -407,14 +423,14 @@ GADGETS = {
       'url': 'https://marketplace.visualstudio.com/_apis/public/gallery/'
              'publishers/msjsdiag/vsextensions/'
              'debugger-for-chrome/${version}/vspackage',
-      'target': 'msjsdiag.debugger-for-chrome-4.12.0.vsix.gz',
+      'target': 'msjsdiag.debugger-for-chrome-4.12.10.vsix.gz',
       'format': 'zip.gz',
     },
     'all': {
-      'version': '4.12.0',
-      'file_name': 'msjsdiag.debugger-for-chrome-4.12.0.vsix',
+      'version': '4.12.10',
+      'file_name': 'msjsdiag.debugger-for-chrome-4.12.10.vsix',
       'checksum':
-        '0df2fe96d059a002ebb0936b0003e6569e5a5c35260dc3791e1657d27d82ccf5'
+        ''
     },
     'adapters': {
       'chrome': {
@@ -429,7 +445,7 @@ GADGETS = {
   },
   'CodeLLDB': {
     'language': 'rust',
-    'enabled': False,
+    'enabled': True,
     'download': {
       'url': 'https://github.com/vadimcn/vscode-lldb/releases/download/'
              '${version}/${file_name}',
@@ -484,6 +500,33 @@ GADGETS = {
           "terminal": "integrated",
         }
       },
+    },
+  },
+  'local-lua-debugger-vscode': {
+    'language': 'lua',
+    'enabled': True,
+    'repo': {
+      'url': 'https://github.com/tomblind/local-lua-debugger-vscode.git',
+      'ref': 'release-${version}'
+    },
+    'all': {
+      'version': '0.2.0',
+    },
+    'do': lambda name, root, gadget: installer.InstallLuaLocal( name,
+                                                                root,
+                                                                gadget ),
+    'adapters': {
+      'lua-local': {
+        'command': [
+          'node',
+          '${gadgetDir}/local-lua-debugger-vscode/extension/debugAdapter.js'
+        ],
+        'name': 'lua-local',
+        'configuration': {
+          'interpreter': 'lua',
+          'extensionPath': '${gadgetDir}/local-lua-debugger-vscode'
+        }
+      }
     },
   },
 }

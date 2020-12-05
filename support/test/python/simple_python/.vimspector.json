@@ -1,5 +1,17 @@
 {
+  "$schema": "https://puremourning.github.io/vimspector/schema/vimspector.schema.json",
+  "adapters": {
+    "test_custom": {
+      "command": "This is a test"
+    }
+  },
   "configurations": {
+    "Use custom gadget": {
+      "adapter": "test_custom",
+      "configuration": {
+        "request": "launch"
+      }
+    },
     // This is a comment.
     "run legacy vscode-python": {
       "adapter": "vscode-python", /* coment goes here too */
@@ -52,13 +64,21 @@
     },
     "run - default": {
       "adapter": "debugpy",
+      "variables": {
+        "MAKE_ENV_OUTPUT": {
+          "shell": "${workspaceRoot}/make_env.sh"
+        }
+      },
       "configuration": {
         "request": "launch",
         "type": "python",
         "cwd": "${workspaceRoot}",
         "program": "${program:${file\\}}",
-        "stopOnEntry": false,
-        "console": "integratedTerminal"
+        "stopOnEntry#json": "${StopOnEntry:true}",
+        "console": "integratedTerminal",
+        "args#json": "${args:[]}",
+        "igored#json#s": "string not json",
+        "env#json": "${MAKE_ENV_OUTPUT}"
       },
       "breakpoints": {
         "exception": {

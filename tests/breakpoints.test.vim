@@ -1,41 +1,10 @@
 function! SetUp()
   call vimspector#test#setup#SetUpWithMappings( v:none )
+  call ThisTestIsFlaky()
 endfunction
 
 function! ClearDown()
   call vimspector#test#setup#ClearDown()
-endfunction
-
-function! SetUp_Test_Mappings_Are_Added_HUMAN()
-  let g:vimspector_enable_mappings = 'HUMAN'
-endfunction
-
-function! Test_Mappings_Are_Added_HUMAN()
-  call assert_true( hasmapto( 'vimspector#Continue()' ) )
-  call assert_false( hasmapto( 'vimspector#Launch()' ) )
-  call assert_true( hasmapto( 'vimspector#Stop()' ) )
-  call assert_true( hasmapto( 'vimspector#Restart()' ) )
-  call assert_true( hasmapto( 'vimspector#ToggleBreakpoint()' ) )
-  call assert_true( hasmapto( 'vimspector#AddFunctionBreakpoint' ) )
-  call assert_true( hasmapto( 'vimspector#StepOver()' ) )
-  call assert_true( hasmapto( 'vimspector#StepInto()' ) )
-  call assert_true( hasmapto( 'vimspector#StepOut()' ) )
-endfunction
-
-function! SetUp_Test_Mappings_Are_Added_VISUAL_STUDIO()
-  let g:vimspector_enable_mappings = 'VISUAL_STUDIO'
-endfunction
-
-function! Test_Mappings_Are_Added_VISUAL_STUDIO()
-  call assert_true( hasmapto( 'vimspector#Continue()' ) )
-  call assert_false( hasmapto( 'vimspector#Launch()' ) )
-  call assert_true( hasmapto( 'vimspector#Stop()' ) )
-  call assert_true( hasmapto( 'vimspector#Restart()' ) )
-  call assert_true( hasmapto( 'vimspector#ToggleBreakpoint()' ) )
-  call assert_true( hasmapto( 'vimspector#AddFunctionBreakpoint' ) )
-  call assert_true( hasmapto( 'vimspector#StepOver()' ) )
-  call assert_true( hasmapto( 'vimspector#StepInto()' ) )
-  call assert_true( hasmapto( 'vimspector#StepOut()' ) )
 endfunction
 
 function! SetUp_Test_Signs_Placed_Using_API_Are_Shown()
@@ -53,14 +22,16 @@ function! Test_Signs_Placed_Using_API_Are_Shown()
   call assert_true( exists( '*vimspector#ToggleBreakpoint' ) )
   call vimspector#test#signs#AssertSignGroupSingletonAtLine( 'VimspectorBP',
                                                            \ line( '.' ),
-                                                           \ 'vimspectorBP' )
+                                                           \ 'vimspectorBP',
+                                                           \ 9 )
 
   " Disable breakpoint
   call vimspector#ToggleBreakpoint()
   call vimspector#test#signs#AssertSignGroupSingletonAtLine(
         \ 'VimspectorBP',
         \ line( '.' ),
-        \ 'vimspectorBPDisabled' )
+        \ 'vimspectorBPDisabled',
+        \ 9 )
 
   " Remove breakpoint
   call vimspector#ToggleBreakpoint()
@@ -73,65 +44,6 @@ function! Test_Signs_Placed_Using_API_Are_Shown()
   call vimspector#test#signs#AssertSignGroupEmpty( 'VimspectorCode' )
 
   call vimspector#test#setup#Reset()
-  %bwipeout!
-endfunction
-
-function! SetUp_Test_Use_Mappings_HUMAN()
-  let g:vimspector_enable_mappings = 'HUMAN'
-endfunction
-
-function! Test_Use_Mappings_HUMAN()
-  lcd testdata/cpp/simple
-  edit simple.cpp
-  call setpos( '.', [ 0, 15, 1 ] )
-
-  call vimspector#test#signs#AssertCursorIsAtLineInBuffer( 'simple.cpp', 15, 1 )
-  call vimspector#test#signs#AssertSignGroupEmptyAtLine( 'VimspectorBP', 15 )
-
-  " Add the breakpoint
-  call feedkeys( "\<F9>", 'xt' )
-  call vimspector#test#signs#AssertSignGroupSingletonAtLine( 'VimspectorBP',
-                                                           \ 15,
-                                                           \ 'vimspectorBP' )
-
-  " Disable the breakpoint
-  call feedkeys( "\<F9>", 'xt' )
-  call vimspector#test#signs#AssertSignGroupSingletonAtLine(
-        \ 'VimspectorBP',
-        \ 15,
-        \ 'vimspectorBPDisabled' )
-
-  " Delete the breakpoint
-  call feedkeys( "\<F9>", 'xt' )
-  call vimspector#test#signs#AssertSignGroupEmptyAtLine( 'VimspectorBP', 15 )
-
-  " Add it again
-  call feedkeys( "\<F9>", 'xt' )
-  call vimspector#test#signs#AssertSignGroupSingletonAtLine(
-        \ 'VimspectorBP',
-        \ 15,
-        \ 'vimspectorBP' )
-
-  " Here we go. Start Debugging
-  call feedkeys( "\<F5>", 'xt' )
-
-  call assert_equal( 2, len( gettabinfo() ) )
-  let cur_tabnr = tabpagenr()
-  call assert_equal( 5, len( gettabinfo( cur_tabnr )[ 0 ].windows ) )
-
-  call vimspector#test#signs#AssertCursorIsAtLineInBuffer( 'simple.cpp', 15, 1 )
-
-  " Step
-  call feedkeys( "\<F10>", 'xt' )
-
-  call vimspector#test#signs#AssertCursorIsAtLineInBuffer( 'simple.cpp', 16, 1 )
-  call WaitForAssert( {->
-        \ vimspector#test#signs#AssertPCIsAtLineInBuffer( 'simple.cp', 16 )
-        \ } )
-
-  call vimspector#test#setup#Reset()
-
-  lcd -
   %bwipeout!
 endfunction
 
@@ -184,7 +96,8 @@ function Test_DisableBreakpointWhileDebugging()
         \ vimspector#test#signs#AssertSignGroupSingletonAtLine(
           \ 'VimspectorCode',
           \ 16,
-          \ 'vimspectorBP' )
+          \ 'vimspectorBP',
+          \ 9 )
         \ } )
 
   " Remove the breakpoint
@@ -194,17 +107,17 @@ function Test_DisableBreakpointWhileDebugging()
                                                           \ 16 )
         \ } )
 
-  " Add the breakpoint
-  call feedkeys( "\<F9>", 'xt' )
+  call setpos( '.', [ 0, 1, 1 ] )
+  call vimspector#SetLineBreakpoint( 'simple.cpp', 16 )
   call WaitForAssert( {->
         \ vimspector#test#signs#AssertSignGroupSingletonAtLine(
            \ 'VimspectorCode',
            \ 16,
-           \ 'vimspectorBP' )
+           \ 'vimspectorBP',
+           \ 9 )
         \ } )
 
   " Run to breakpoint
-  call setpos( '.', [ 0, 15, 1 ] )
   call feedkeys( "\<F5>", 'xt' )
   call vimspector#test#signs#AssertCursorIsAtLineInBuffer( 'simple.cpp', 16, 1 )
   call WaitForAssert( {->
@@ -224,7 +137,8 @@ function Test_DisableBreakpointWhileDebugging()
   call vimspector#test#signs#AssertSignGroupSingletonAtLine(
         \ 'VimspectorBP',
         \ 16,
-        \ 'vimspectorBP' )
+        \ 'vimspectorBP',
+        \ 9 )
 
   " Disable the breakpoint
   call setpos( '.', [ bufnr( 'simple.cpp' ), 16, 1 ] )
@@ -232,7 +146,8 @@ function Test_DisableBreakpointWhileDebugging()
   call vimspector#test#signs#AssertSignGroupSingletonAtLine(
         \ 'VimspectorBP',
         \ 16,
-        \ 'vimspectorBPDisabled' )
+        \ 'vimspectorBPDisabled',
+        \ 9 )
 
   " And delete it
   call feedkeys( "\<F9>", 'xt' )
@@ -246,6 +161,58 @@ function Test_DisableBreakpointWhileDebugging()
 
   lcd -
   call vimspector#test#setup#Reset()
+  %bwipeout!
+endfunction
+
+function! Test_Add_Breakpoints_In_File_Then_Open()
+  lcd testdata/cpp/simple
+
+  " Set and clear without file open
+  call vimspector#SetLineBreakpoint( 'simple.cpp', 16 )
+  call vimspector#ClearLineBreakpoint( 'simple.cpp', 16 )
+
+  " Clear non-set breakpoint
+  call vimspector#ClearLineBreakpoint( 'simple.cpp', 1 )
+
+  " Re-add
+  call vimspector#SetLineBreakpoint( 'simple.cpp', 16 )
+
+  " Open and expect sign to be added
+  edit simple.cpp
+  call vimspector#test#signs#AssertSignGroupSingletonAtLine( 'VimspectorBP',
+                                                           \ 16,
+                                                           \ 'vimspectorBP',
+                                                           \ 9 )
+  call vimspector#LaunchWithSettings( { 'configuration': 'run-to-breakpoint' } )
+  call vimspector#test#signs#AssertCursorIsAtLineInBuffer( 'simple.cpp', 16, 1 )
+
+  call vimspector#test#setup#Reset()
+  lcd -
+  %bwipeout!
+endfunction
+
+function! Test_Add_Breakpoints_In_NonOpenedFile_RunToBreak()
+  lcd testdata/cpp/simple
+
+  " add
+  call vimspector#SetLineBreakpoint( 'simple.cpp', 16 )
+
+  call vimspector#LaunchWithSettings( {
+        \ 'configuration': 'run-to-breakpoint-specify-file',
+        \ 'prog': 'simple'
+        \ } )
+  call WaitFor( {-> bufexists( 'simple.cpp' ) } )
+  call vimspector#test#signs#AssertCursorIsAtLineInBuffer( 'simple.cpp', 16, 1 )
+  call vimspector#test#signs#AssertPCIsAtLineInBuffer( 'simple.cpp', 16 )
+
+  call vimspector#test#signs#AssertSignAtLine(
+        \ 'VimspectorCode',
+        \ 16,
+        \ 'vimspectorPCBP',
+        \ 200 )
+
+  call vimspector#test#setup#Reset()
+  lcd -
   %bwipeout!
 endfunction
 
@@ -266,14 +233,16 @@ function! Test_Insert_Code_Above_Breakpoint()
   call feedkeys( "\<F9>", 'xt' )
   call vimspector#test#signs#AssertSignGroupSingletonAtLine( 'VimspectorBP',
                                                            \ 25,
-                                                           \ 'vimspectorBP' )
+                                                           \ 'vimspectorBP',
+                                                           \ 9 )
 
   " Insert a line above the breakpoint
   call append( 22, '  # Test' )
   call vimspector#test#signs#AssertCursorIsAtLineInBuffer( fn, 26, 5 )
   call vimspector#test#signs#AssertSignGroupSingletonAtLine( 'VimspectorBP',
                                                            \ 26,
-                                                           \ 'vimspectorBP' )
+                                                           \ 'vimspectorBP',
+                                                           \ 9 )
 
   " CHeck that we break at the right point
   call setpos( '.', [ 0, 1, 1 ] )
@@ -286,16 +255,17 @@ function! Test_Insert_Code_Above_Breakpoint()
   call setpos( '.', [ 0, 26, 1 ] )
   call vimspector#test#signs#AssertSignGroupSingletonAtLine( 'VimspectorBP',
                                                            \ 26,
-                                                           \ 'vimspectorBP' )
+                                                           \ 'vimspectorBP',
+                                                           \ 9 )
   call feedkeys( "\<F9>", 'xt' )
   call vimspector#test#signs#AssertSignGroupSingletonAtLine(
         \ 'VimspectorBP',
         \ 26,
-        \ 'vimspectorBPDisabled' )
+        \ 'vimspectorBPDisabled',
+        \ 9 )
   " Delete it
   call feedkeys( "\<F9>", 'xt' )
   call vimspector#test#signs#AssertSignGroupEmptyAtLine( 'VimspectorBP', 26 )
-
 endfunction
 
 function! SetUp_Test_Conditional_Line_Breakpoint()
@@ -314,14 +284,16 @@ function! Test_Conditional_Line_Breakpoint()
   call feedkeys( "\\\<F9>argc==0\<CR>\<CR>", 'xt' )
   call vimspector#test#signs#AssertSignGroupSingletonAtLine( 'VimspectorBP',
                                                            \ 16,
-                                                           \ 'vimspectorBPCond' )
+                                                           \ 'vimspectorBPCond',
+                                                           \ 9 )
 
   " Disable the breakpoint
   call feedkeys( "\<F9>", 'xt' )
   call vimspector#test#signs#AssertSignGroupSingletonAtLine(
         \ 'VimspectorBP',
         \ 16,
-        \ 'vimspectorBPDisabled' )
+        \ 'vimspectorBPDisabled',
+        \ 9 )
 
   " Delete the breakpoint
   call feedkeys( "\<F9>", 'xt' )
@@ -335,20 +307,26 @@ function! Test_Conditional_Line_Breakpoint()
   call vimspector#test#signs#AssertSignGroupSingletonAtLine(
         \ 'VimspectorBP',
         \ 16,
-        \ 'vimspectorBPCond' )
+        \ 'vimspectorBPCond',
+        \ 9 )
   call setpos( '.', [ 0, 9, 1 ] )
   call vimspector#ToggleBreakpoint()
   call vimspector#test#signs#AssertSignGroupSingletonAtLine(
         \ 'VimspectorBP',
         \ 9,
-        \ 'vimspectorBP' )
+        \ 'vimspectorBP',
+        \ 9 )
 
-  call setpos( '.', [ 0, 17, 1 ] )
-  call vimspector#ToggleBreakpoint( { 'condition': 'argc == 1' } )
+  call setpos( '.', [ 0, 1, 1 ] )
+  call vimspector#SetLineBreakpoint(
+        \ 'simple.cpp',
+        \ 17,
+        \ { 'condition': 'argc == 1' } )
   call vimspector#test#signs#AssertSignGroupSingletonAtLine(
         \ 'VimspectorBP',
         \ 17,
-        \ 'vimspectorBPCond' )
+        \ 'vimspectorBPCond',
+        \ 9 )
 
   call setpos( '.', [ 0, 1, 1 ] )
 
@@ -376,6 +354,8 @@ function! SetUp_Test_Conditional_Line_Breakpoint_Hit()
 endfunction
 
 function! Test_Conditional_Line_Breakpoint_Hit()
+  call ThisTestIsFlaky()
+
   let fn = '../support/test/python/simple_python/main.py'
   exe 'edit' fn
   call setpos( '.', [ 0, 14, 1 ] )
@@ -385,7 +365,8 @@ function! Test_Conditional_Line_Breakpoint_Hit()
   call vimspector#test#signs#AssertSignGroupSingletonAtLine(
         \ 'VimspectorBP',
         \ 14,
-        \ 'vimspectorBPCond' )
+        \ 'vimspectorBPCond',
+        \ 9 )
 
   call vimspector#LaunchWithSettings( { 'configuration': 'run' } )
   call vimspector#test#signs#AssertCursorIsAtLineInBuffer( fn, 14, 1 )
@@ -523,6 +504,251 @@ function! Test_ListBreakpoints()
         \ { 'lnum': 9, 'col': 1, 'bufnr': bufnr( 'simple.cpp', 0 ) },
         \ ] )
 
+  call vimspector#test#setup#Reset()
+  %bwipe!
+endfunction
+
+function! Test_Custom_Breakpoint_Priority()
+  let g:vimspector_sign_priority = {
+        \ 'vimspectorPC': 1,
+        \ 'vimspectorPCBP': 1,
+        \ 'vimspectorBP': 2,
+        \ 'vimspectorBPCond': 3,
+        \ 'vimspectorBPDisabled': 4
+        \ }
+
+  " While not debugging
+  lcd testdata/cpp/simple
+  edit simple.cpp
+
+  call setpos( '.', [ 0, 15, 1 ] )
+  call vimspector#ToggleBreakpoint()
+  call vimspector#test#signs#AssertSignGroupSingletonAtLine( 'VimspectorBP',
+                                                           \ 15,
+                                                           \ 'vimspectorBP',
+                                                           \ 2 )
+  call setpos( '.', [ 0, 16, 1 ] )
+  call vimspector#ToggleBreakpoint()
+  call vimspector#ToggleBreakpoint()
+  call vimspector#test#signs#AssertSignGroupSingletonAtLine(
+        \ 'VimspectorBP',
+        \ 16,
+        \ 'vimspectorBPDisabled',
+        \ 4 )
+  call vimspector#ToggleBreakpoint()
+  call vimspector#test#signs#AssertSignGroupEmptyAtLine( 'VimspectorBP', 16 )
+
+  call setpos( '.', [ 0, 17, 1 ] )
+  call vimspector#ToggleBreakpoint( { 'condition': '1' } )
+  call vimspector#test#signs#AssertSignGroupSingletonAtLine(
+        \ 'VimspectorBP',
+        \ 17,
+        \ 'vimspectorBPCond',
+        \ 3 )
+
+  " While debugging
+  call vimspector#Launch()
+  call vimspector#test#signs#AssertCursorIsAtLineInBuffer( 'simple.cpp', 15, 1 )
+  call vimspector#test#signs#AssertPCIsAtLineInBuffer( 'simple.cpp', 15 )
+  call vimspector#test#signs#AssertSignAtLine(
+        \ 'VimspectorCode',
+        \ 15,
+        \ 'vimspectorBP',
+        \ 2 )
+  call vimspector#test#signs#AssertSignAtLine(
+        \ 'VimspectorCode',
+        \ 15,
+        \ 'vimspectorPCBP',
+        \ 1 )
+  call vimspector#test#signs#AssertSignGroupSingletonAtLine( 'VimspectorCode',
+                                                           \ 17,
+                                                           \ 'vimspectorBP',
+                                                           \ 2 )
+
+  call vimspector#StepOver()
+  " No sign as disabled
+  call vimspector#test#signs#AssertCursorIsAtLineInBuffer( 'simple.cpp', 16, 1 )
+  call vimspector#test#signs#AssertPCIsAtLineInBuffer( 'simple.cpp', 16 )
+
+  call vimspector#StepOver()
+  call vimspector#test#signs#AssertCursorIsAtLineInBuffer( 'simple.cpp', 17, 1 )
+  call vimspector#test#signs#AssertPCIsAtLineInBuffer( 'simple.cpp', 17 )
+
+  call vimspector#test#signs#AssertSignGroupSingletonAtLine(
+        \ 'VimspectorCode',
+        \ 15,
+        \ 'vimspectorBP',
+        \ 2 )
+  call vimspector#test#signs#AssertSignAtLine(
+        \ 'VimspectorCode',
+        \ 17,
+        \ 'vimspectorBP',
+        \ 2 )
+  call vimspector#test#signs#AssertSignAtLine(
+        \ 'VimspectorCode',
+        \ 17,
+        \ 'vimspectorPCBP',
+        \ 1 )
+
+
+  call vimspector#test#setup#Reset()
+  lcd -
+  %bwipeout!
+  unlet! g:vimspector_sign_priority
+endfunction
+
+function! Test_Custom_Breakpoint_Priority_Partial()
+  let g:vimspector_sign_priority = {
+        \ 'vimspectorBP': 2,
+        \ 'vimspectorBPCond': 3,
+        \ 'vimspectorBPDisabled': 4
+        \ }
+
+  " While not debugging
+  lcd testdata/cpp/simple
+  edit simple.cpp
+
+  call setpos( '.', [ 0, 15, 1 ] )
+  call vimspector#ToggleBreakpoint()
+  call vimspector#test#signs#AssertSignGroupSingletonAtLine( 'VimspectorBP',
+                                                           \ 15,
+                                                           \ 'vimspectorBP',
+                                                           \ 2 )
+  call setpos( '.', [ 0, 16, 1 ] )
+  call vimspector#ToggleBreakpoint()
+  call vimspector#ToggleBreakpoint()
+  call vimspector#test#signs#AssertSignGroupSingletonAtLine(
+        \ 'VimspectorBP',
+        \ 16,
+        \ 'vimspectorBPDisabled',
+        \ 4 )
+  call vimspector#ToggleBreakpoint()
+  call vimspector#test#signs#AssertSignGroupEmptyAtLine( 'VimspectorBP', 16 )
+
+  call setpos( '.', [ 0, 17, 1 ] )
+  call vimspector#ToggleBreakpoint( { 'condition': '1' } )
+  call vimspector#test#signs#AssertSignGroupSingletonAtLine(
+        \ 'VimspectorBP',
+        \ 17,
+        \ 'vimspectorBPCond',
+        \ 3 )
+
+  " While debugging
+  call vimspector#Launch()
+  call vimspector#test#signs#AssertCursorIsAtLineInBuffer( 'simple.cpp', 15, 1 )
+  call vimspector#test#signs#AssertPCIsAtLineInBuffer( 'simple.cpp', 15 )
+  call vimspector#test#signs#AssertSignAtLine(
+        \ 'VimspectorCode',
+        \ 15,
+        \ 'vimspectorBP',
+        \ 2 )
+  call vimspector#test#signs#AssertSignAtLine(
+        \ 'VimspectorCode',
+        \ 15,
+        \ 'vimspectorPCBP',
+        \ 200 )
+  call vimspector#test#signs#AssertSignGroupSingletonAtLine( 'VimspectorCode',
+                                                           \ 17,
+                                                           \ 'vimspectorBP',
+                                                           \ 2 )
+
+  call vimspector#StepOver()
+  " No sign as disabled
+  call vimspector#test#signs#AssertCursorIsAtLineInBuffer( 'simple.cpp', 16, 1 )
+  call vimspector#test#signs#AssertPCIsAtLineInBuffer( 'simple.cpp', 16 )
+
+  call vimspector#StepOver()
+  call vimspector#test#signs#AssertCursorIsAtLineInBuffer( 'simple.cpp', 17, 1 )
+  call vimspector#test#signs#AssertPCIsAtLineInBuffer( 'simple.cpp', 17 )
+
+  call vimspector#test#signs#AssertSignGroupSingletonAtLine(
+        \ 'VimspectorCode',
+        \ 15,
+        \ 'vimspectorBP',
+        \ 2 )
+  call vimspector#test#signs#AssertSignAtLine(
+        \ 'VimspectorCode',
+        \ 17,
+        \ 'vimspectorBP',
+        \ 2 )
+  call vimspector#test#signs#AssertSignAtLine(
+        \ 'VimspectorCode',
+        \ 17,
+        \ 'vimspectorPCBP',
+        \ 200 )
+
+
+  call vimspector#test#setup#Reset()
+  lcd -
+  %bwipeout!
+  unlet! g:vimspector_sign_priority
+endfunction
+
+function! Test_Add_Line_BP_In_Other_File_While_Debugging()
+  call ThisTestIsFlaky()
+  let moo = 'moo.py'
+  let cow = 'cow.py'
+  lcd ../support/test/python/multiple_files
+  exe 'edit' moo
+
+  call vimspector#Launch()
+  call vimspector#test#signs#AssertCursorIsAtLineInBuffer( moo, 1, 1 )
+  call vimspector#test#signs#AssertPCIsAtLineInBuffer( moo, 1 )
+
+  call cursor( 6, 3 )
+  call vimspector#ToggleBreakpoint()
+  call vimspector#test#signs#AssertPCIsAtLineInBuffer( moo, 1 )
+  call WaitForAssert( {->
+        \vimspector#test#signs#AssertSignGroupSingletonAtLine(
+          \ 'VimspectorCode',
+          \ 6,
+          \ 'vimspectorBP',
+          \ 9 ) } )
+
+  exe 'edit' cow
+  call cursor( 2, 1 )
+  call vimspector#ToggleBreakpoint()
+  call vimspector#test#signs#AssertSignGroupEmptyAtLine( 'VimspectorCode', 6 )
+  call WaitForAssert( {->
+        \ vimspector#test#signs#AssertSignGroupSingletonAtLine(
+          \ 'VimspectorCode',
+          \ 2,
+          \ 'vimspectorBP',
+          \ 9 ) } )
+
+  call vimspector#Continue()
+  call vimspector#test#signs#AssertCursorIsAtLineInBuffer( moo, 6, 1 )
+  call vimspector#test#signs#AssertPCIsAtLineInBuffer( moo, 6 )
+
+  call vimspector#test#signs#AssertSignGroupEmptyAtLine( 'VimspectorCode', 2 )
+  call vimspector#test#signs#AssertSignAtLine(
+        \ 'VimspectorCode',
+        \ 6,
+        \ 'vimspectorBP',
+        \ 9 )
+  call vimspector#test#signs#AssertSignAtLine(
+        \ 'VimspectorCode',
+        \ 6,
+        \ 'vimspectorPCBP',
+        \ 200 )
+
+  call vimspector#Continue()
+  call vimspector#test#signs#AssertCursorIsAtLineInBuffer( cow, 2, 1 )
+  call vimspector#test#signs#AssertPCIsAtLineInBuffer( cow, 2 )
+
+  call vimspector#test#signs#AssertSignGroupEmptyAtLine( 'VimspectorCode', 6 )
+  call vimspector#test#signs#AssertSignAtLine(
+        \ 'VimspectorCode',
+        \ 2,
+        \ 'vimspectorBP',
+        \ 9 )
+  call vimspector#test#signs#AssertSignAtLine(
+        \ 'VimspectorCode',
+        \ 2,
+        \ 'vimspectorPCBP',
+        \ 200 )
+
+  lcd -
   call vimspector#test#setup#Reset()
   %bwipe!
 endfunction

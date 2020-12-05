@@ -57,32 +57,32 @@ def Print( *args, **kwargs ):
     print( *args, **kwargs )
 
 
-def CheckCall( *args, **kwargs ):
-  if options.quiet:
-    try:
-      subprocess.check_output( *args, stderr=subprocess.STDOUT, **kwargs )
-    except subprocess.CalledProcessError as e:
-      print( e.output.decode( 'utf-8' ) )
-      raise
-  else:
-    subprocess.check_call( *args, **kwargs )
+class MissingExecutable( Exception ):
+  pass
 
 
-def PathToAnyWorkingPython3():
-  # We can't rely on sys.executable because it's usually 'vim' (fixme, not with
-  # neovim?)
+def GetPATHAsList():
   paths = os.environ[ 'PATH' ].split( os.pathsep )
-
   if install.GetOS() == 'windows':
     paths.insert( 0, os.getcwd() )
-    candidates = [ os.path.join( sys.exec_prefix, 'python.exe' ),
-                   'python.exe' ]
-  else:
-    candidates = [ os.path.join( sys.exec_prefix, 'bin', 'python3' ),
-                   'python3',
-                   'python' ]
+  return paths
 
-  for candidate in candidates:
+
+def FindExecutable( executable: str, paths=None ):
+  if not paths:
+    paths = GetPATHAsList()
+
+  if install.GetOS() == 'windows':
+    extensions = [ '.exe', '.bat', '.cmd' ]
+  else:
+    extensions = [ '' ]
+
+  for extension in extensions:
+    if executable.endswith( extension ):
+      candidate = executable
+    else:
+      candidate = executable + extension
+
     for path in paths:
       filename = os.path.abspath( os.path.join( path, candidate ) )
       if not os.path.isfile( filename ):
@@ -91,6 +91,42 @@ def PathToAnyWorkingPython3():
         continue
 
       return filename
+
+  raise MissingExecutable( f"Unable to find executable { executable } in path" )
+
+
+
+def CheckCall( cmd, *args, **kwargs ):
+  cmd[ 0 ] = FindExecutable( cmd[ 0 ] )
+
+  if options.quiet:
+    try:
+      subprocess.check_output( cmd, *args, stderr=subprocess.STDOUT, **kwargs )
+    except subprocess.CalledProcessError as e:
+      print( e.output.decode( 'utf-8' ) )
+      raise
+  else:
+    subprocess.check_call( cmd, *args, **kwargs )
+
+
+def PathToAnyWorkingPython3():
+  # We can't rely on sys.executable because it's usually 'vim' (fixme, not with
+  # neovim?)
+  paths = GetPATHAsList()
+
+  if install.GetOS() == 'windows':
+    candidates = [ os.path.join( sys.exec_prefix, 'python.exe' ),
+                   'python.exe' ]
+  else:
+    candidates = [ os.path.join( sys.exec_prefix, 'bin', 'python3' ),
+                   'python3',
+                   'python' ]
+
+  for candidate in candidates:
+    try:
+      return FindExecutable( candidate, paths=paths )
+    except MissingExecutable:
+      pass
 
   raise RuntimeError( "Unable to find a working python3" )
 
@@ -114,7 +150,7 @@ def RunInstaller( api_prefix, leave_open, *args, **kwargs ):
   _ResetInstaller()
 
   with utils.RestoreCurrentWindow():
-    vim.command( f'botright { settings.Int( "bottombar_height", 10 ) }new' )
+    vim.command( f'botright { settings.Int( "bottombar_height" ) }new' )
     win = vim.current.window
     OUTPUT_VIEW = output.OutputView( win, api_prefix )
 
@@ -348,7 +384,7 @@ def InstallDebugpy( name, root, gadget ):
 
 
 def InstallTclProDebug( name, root, gadget ):
-  configure = [ './configure' ]
+  configure = [ 'sh', './configure' ]
 
   if install.GetOS() == 'macos':
     # Apple removed the headers from system frameworks because they are
@@ -383,6 +419,13 @@ def InstallTclProDebug( name, root, gadget ):
 
 
 def InstallNodeDebug( name, root, gadget ):
+  with CurrentWorkingDir( root ):
+    CheckCall( [ 'npm', 'install' ] )
+    CheckCall( [ 'npm', 'run', 'build' ] )
+  MakeSymlink( name, root )
+
+
+def InstallLuaLocal( name, root, gadget ):
   with CurrentWorkingDir( root ):
     CheckCall( [ 'npm', 'install' ] )
     CheckCall( [ 'npm', 'run', 'build' ] )
@@ -445,7 +488,7 @@ def InstallGagdet( name: str,
       url = string.Template( gadget[ 'repo' ][ 'url' ] ).substitute( spec )
       ref = string.Template( gadget[ 'repo' ][ 'ref' ] ).substitute( spec )
 
-      print( f"Installing {name}@{gadget[ 'repo' ][ 'ref' ]}..." )
+      print( f"Installing {name}@{ref}..." )
       spec[ 'repo' ] = gadget[ 'repo' ]
       if not manifest.RequiresUpdate( name, spec ):
         save_adapters()

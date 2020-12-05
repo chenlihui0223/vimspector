@@ -17,6 +17,7 @@ from vimspector import utils, install
 
 import vim
 import json
+import typing
 
 
 class TabBuffer( object ):
@@ -55,6 +56,8 @@ def ShowOutputInWindow( win_id, category ):
 class OutputView( object ):
   """Container for a 'tabbed' window of buffers that can be used to display
   files or the output of commands."""
+  _buffers: typing.Dict[ str, TabBuffer ]
+
   def __init__( self, window, api_prefix ):
     self._window = window
     self._buffers = {}
@@ -146,6 +149,17 @@ class OutputView( object ):
                      cmd = None,
                      completion_handler = None,
                      syntax = None ):
+
+    buf_to_delete = None
+    if ( not self._buffers
+         and self._window is not None
+         and self._window.valid
+         and not self._window.buffer.name ):
+      # If there's an empty buffer in the current window that we're not using,
+      # delete it. We could try and use it, but that complicates the call to
+      # SetUpCommandBuffer
+      buf_to_delete = self._window.buffer
+
     if file_name is not None:
       assert cmd is None
       if install.GetOS() == "windows":
@@ -160,6 +174,7 @@ class OutputView( object ):
         category,
         self._api_prefix,
         completion_handler = completion_handler )
+
       self._buffers[ category ] = TabBuffer( out, len( self._buffers ) )
       self._buffers[ category ].is_job = True
       self._RenderWinBar( category )
@@ -170,13 +185,15 @@ class OutputView( object ):
         name = 'vimspector.Output:{0}'.format( category )
 
       tab_buffer = TabBuffer( utils.NewEmptyBuffer(), len( self._buffers ) )
+
       self._buffers[ category ] = tab_buffer
 
       if category == 'Console':
         utils.SetUpPromptBuffer( tab_buffer.buf,
                                  name,
                                  '> ',
-                                 'vimspector#EvaluateConsole' )
+                                 'vimspector#EvaluateConsole',
+                                 'vimspector#OmniFuncConsole' )
       else:
         utils.SetUpHiddenBuffer( tab_buffer.buf, name )
 
@@ -187,8 +204,15 @@ class OutputView( object ):
       syntax,
       self._buffers[ category ].buf )
 
+    if buf_to_delete:
+      with utils.RestoreCurrentWindow():
+        self._ShowOutput( category )
+      utils.CleanUpHiddenBuffer( buf_to_delete )
 
   def _RenderWinBar( self, category ):
+    if not utils.UseWinBar():
+      return
+
     if not self._window.valid:
       return
 
@@ -216,6 +240,9 @@ class OutputView( object ):
   def GetCategories( self ):
     return list( self._buffers.keys() )
 
+  def AddLogFileView( self, file_name = utils.LOG_FILE ):
+    self._CreateBuffer( 'Vimspector', file_name = file_name )
+
 
 class DAPOutputView( OutputView ):
   """Specialised OutputView which adds the DAP Console (REPL)"""
@@ -226,7 +253,7 @@ class DAPOutputView( OutputView ):
     for b in set( BUFFER_MAP.values() ):
       self._CreateBuffer( b )
 
-    self._CreateBuffer( 'Vimspector', file_name = utils.LOG_FILE )
+    self.AddLogFileView()
     self._ShowOutput( 'Console' )
 
   def ConnectionUp( self, connection ):
@@ -236,14 +263,18 @@ class DAPOutputView( OutputView ):
     # Don't clear because output is probably still useful
     self._connection = None
 
-  def Evaluate( self, frame, expression ):
-    self._Print( 'Console', [ 'Evaluating: ' + expression ] )
+  def Evaluate( self, frame, expression, verbose ):
+    if verbose:
+      self._Print( 'Console', f"Evaluating: { expression }" )
 
     def print_result( message ):
       result = message[ 'body' ][ 'result' ]
       if result is None:
         result = '<no result>'
-      self._Print( 'Console', f'  Result: { result }' )
+      self._Print( 'Console', result.splitlines() )
+
+    def print_failure( reason, msg ):
+      self._Print( 'Console', reason.splitlines() )
 
     request = {
       'command': 'evaluate',
@@ -256,4 +287,6 @@ class DAPOutputView( OutputView ):
     if frame:
       request[ 'arguments' ][ 'frameId' ] = frame[ 'id' ]
 
-    self._connection.DoRequest( print_result, request )
+    self._connection.DoRequest( print_result,
+                                request,
+                                print_failure )

@@ -31,6 +31,7 @@ from vimspector import ( breakpoints,
                          utils,
                          variables,
                          settings,
+                         terminal,
                          installer )
 from vimspector.vendor.json_minify import minify
 
@@ -55,11 +56,13 @@ class DebugSession( object ):
                        install.GetGadgetDir( VIMSPECTOR_HOME ) )
 
     self._uiTab = None
+    self._logView = None
     self._stackTraceView = None
     self._variablesView = None
     self._outputView = None
     self._breakpoints = breakpoints.ProjectBreakpoints()
     self._splash_screen = None
+    self._remote_term = None
 
     self._run_on_server_exit = None
 
@@ -74,6 +77,26 @@ class DebugSession( object ):
     self._launch_complete = False
     self._on_init_complete_handlers = []
     self._server_capabilities = {}
+    self.ClearTemporaryBreakpoints()
+
+  def GetConfigurations( self, adapters ):
+    current_file = utils.GetBufferFilepath( vim.current.buffer )
+    filetypes = utils.GetBufferFiletypes( vim.current.buffer )
+    configurations = {}
+
+    for launch_config_file in PathsToAllConfigFiles( VIMSPECTOR_HOME,
+                                                     current_file,
+                                                     filetypes ):
+      self._logger.debug( f'Reading configurations from: {launch_config_file}' )
+      if not launch_config_file or not os.path.exists( launch_config_file ):
+        continue
+
+      with open( launch_config_file, 'r' ) as f:
+        database = json.loads( minify( f.read() ) )
+        configurations.update( database.get( 'configurations' ) or {} )
+        adapters.update( database.get( 'adapters' ) or {} )
+
+    return launch_config_file, configurations
 
   def Start( self, launch_variables = None ):
     # We mutate launch_variables, so don't mutate the default argument.
@@ -87,9 +110,14 @@ class DebugSession( object ):
     self._adapter = None
 
     current_file = utils.GetBufferFilepath( vim.current.buffer )
-    filetypes = utils.GetBufferFiletypes( vim.current.buffer )
-    configurations = {}
     adapters = {}
+    launch_config_file, configurations = self.GetConfigurations( adapters )
+
+    if not configurations:
+      utils.UserMessage( 'Unable to find any debug configurations. '
+                         'You need to tell vimspector how to launch your '
+                         'application.' )
+      return
 
     glob.glob( install.GetGadgetDir( VIMSPECTOR_HOME ) )
     for gadget_config_file in PathsToAllGadgetConfigs( VIMSPECTOR_HOME,
@@ -101,24 +129,6 @@ class DebugSession( object ):
       with open( gadget_config_file, 'r' ) as f:
         a =  json.loads( minify( f.read() ) ).get( 'adapters' ) or {}
         adapters.update( a )
-
-    for launch_config_file in PathsToAllConfigFiles( VIMSPECTOR_HOME,
-                                                     current_file,
-                                                     filetypes ):
-      self._logger.debug( f'Reading configurations from: {launch_config_file}' )
-      if not launch_config_file or not os.path.exists( launch_config_file ):
-        continue
-
-      with open( launch_config_file, 'r' ) as f:
-        database = json.loads( minify( f.read() ) )
-        adapters.update( database.get( 'adapters' ) or {} )
-        configurations.update( database.get( 'configurations' or {} ) )
-
-    if not configurations:
-      utils.UserMessage( 'Unable to find any debug configurations. '
-                         'You need to tell vimspector how to launch your '
-                         'application.' )
-      return
 
     if 'configuration' in launch_variables:
       configuration_name = launch_variables.pop( 'configuration' )
@@ -332,12 +342,15 @@ class DebugSession( object ):
       return wrapper
     return decorator
 
+  def _HasUI( self ):
+    return self._uiTab and self._uiTab.valid
+
   def RequiresUI( otherwise=None ):
     """Decorator, call fct if self._connected else echo warning"""
     def decorator( fct ):
       @functools.wraps( fct )
       def wrapper( self, *args, **kwargs ):
-        if not self._uiTab or not self._uiTab.valid:
+        if not self._HasUI():
           utils.UserMessage(
             'Vimspector is not active',
             persist=False,
@@ -356,7 +369,6 @@ class DebugSession( object ):
 
 
   def OnServerStderr( self, data ):
-    self._logger.info( "Server stderr: %s", data )
     if self._outputView:
       self._outputView.Print( 'server', data )
 
@@ -400,6 +412,7 @@ class DebugSession( object ):
       self._variablesView = None
       self._outputView = None
       self._codeView = None
+      self._remote_term = None
       self._uiTab = None
 
     # make sure that we're displaying signs in any still-open buffers
@@ -417,39 +430,90 @@ class DebugSession( object ):
       },
     } )
 
+    self._stackTraceView.OnContinued()
+    self._codeView.SetCurrentFrame( None )
+
   @IfConnected()
   def StepInto( self ):
-    if self._stackTraceView.GetCurrentThreadId() is None:
+    threadId = self._stackTraceView.GetCurrentThreadId()
+    if threadId is None:
       return
 
-    self._connection.DoRequest( None, {
+    def handler( *_ ):
+      self._stackTraceView.OnContinued( { 'threadId': threadId } )
+      self._codeView.SetCurrentFrame( None )
+
+    self._connection.DoRequest( handler, {
       'command': 'stepIn',
       'arguments': {
-        'threadId': self._stackTraceView.GetCurrentThreadId()
+        'threadId': threadId
       },
     } )
 
   @IfConnected()
   def StepOut( self ):
-    if self._stackTraceView.GetCurrentThreadId() is None:
+    threadId = self._stackTraceView.GetCurrentThreadId()
+    if threadId is None:
       return
 
-    self._connection.DoRequest( None, {
+    def handler( *_ ):
+      self._stackTraceView.OnContinued( { 'threadId': threadId } )
+      self._codeView.SetCurrentFrame( None )
+
+    self._connection.DoRequest( handler, {
       'command': 'stepOut',
       'arguments': {
-        'threadId': self._stackTraceView.GetCurrentThreadId()
+        'threadId': threadId
       },
     } )
 
+
   def Continue( self ):
-    if self._connection:
-      self._stackTraceView.Continue()
-    else:
+    if not self._connection:
       self.Start()
+      return
+
+    threadId = self._stackTraceView.GetCurrentThreadId()
+    if threadId is None:
+      utils.UserMessage( 'No current thread', persist = True )
+      return
+
+    def handler( msg ):
+      self._stackTraceView.OnContinued( {
+          'threadId': threadId,
+          'allThreadsContinued': ( msg.get( 'body' ) or {} ).get(
+            'allThreadsContinued',
+            True )
+        } )
+      self._codeView.SetCurrentFrame( None )
+
+    self._connection.DoRequest( handler, {
+      'command': 'continue',
+      'arguments': {
+        'threadId': threadId,
+      },
+    } )
 
   @IfConnected()
   def Pause( self ):
-    self._stackTraceView.Pause()
+    if self._stackTraceView.GetCurrentThreadId() is None:
+      utils.UserMessage( 'No current thread', persist = True )
+      return
+
+    self._connection.DoRequest( None, {
+      'command': 'pause',
+      'arguments': {
+        'threadId': self._stackTraceView.GetCurrentThreadId(),
+      },
+    } )
+
+  @IfConnected()
+  def PauseContinueThread( self ):
+    self._stackTraceView.PauseContinueThread()
+
+  @IfConnected()
+  def SetCurrentThread( self ):
+    self._stackTraceView.SetCurrentThread()
 
   @IfConnected()
   def ExpandVariable( self ):
@@ -461,9 +525,10 @@ class DebugSession( object ):
                                   expression )
 
   @IfConnected()
-  def EvaluateConsole( self, expression ):
+  def EvaluateConsole( self, expression, verbose ):
     self._outputView.Evaluate( self._stackTraceView.GetCurrentFrame(),
-                               expression )
+                               expression,
+                               verbose )
 
   @IfConnected()
   def DeleteWatch( self ):
@@ -492,6 +557,26 @@ class DebugSession( object ):
   def ExpandFrameOrThread( self ):
     self._stackTraceView.ExpandFrameOrThread()
 
+  def ToggleLog( self ):
+    if self._HasUI():
+      return self.ShowOutput( 'Vimspector' )
+
+    if self._logView and self._logView.WindowIsValid():
+      self._logView.Reset()
+      self._logView = None
+      return
+
+    if self._logView:
+      self._logView.Reset()
+
+    # TODO: The UI code is too scattered. Re-organise into a UI class that
+    # just deals with these thigns like window layout and custmisattion.
+    vim.command( f'botright { settings.Int( "bottombar_height" ) }new' )
+    win = vim.current.window
+    self._logView = output.OutputView( win, self._api_prefix )
+    self._logView.AddLogFileView()
+    self._logView.ShowOutput( 'Vimspector' )
+
   @RequiresUI()
   def ShowOutput( self, category ):
     if not self._outputView.WindowIsValid():
@@ -501,7 +586,7 @@ class DebugSession( object ):
       # and poking into each View class to check its window is valid also feels
       # wrong.
       with utils.LetCurrentTabpage( self._uiTab ):
-        vim.command( f'botright { settings.Int( "bottombar_height", 10 ) }new' )
+        vim.command( f'botright { settings.Int( "bottombar_height" ) }new' )
         self._outputView.UseWindow( vim.current.window )
         vim.vars[ 'vimspector_session_windows' ][ 'output' ] = utils.WindowID(
           vim.current.window,
@@ -530,8 +615,14 @@ class DebugSession( object ):
     # TODO:
     #  - start / length
     #  - sortText
-    return [ i.get( 'text' ) or i[ 'label' ]
-             for i in response[ 'body' ][ 'targets' ] ]
+    return response[ 'body' ][ 'targets' ]
+
+
+  def RefreshSigns( self, file_name ):
+    if self._connection:
+      self._codeView.Refresh( file_name )
+    else:
+      self._breakpoints.Refresh( file_name )
 
 
   def _SetUpUI( self ):
@@ -544,7 +635,7 @@ class DebugSession( object ):
 
     # Call stack
     vim.command(
-      f'topleft vertical { settings.Int( "sidebar_width", 50 ) }new' )
+      f'topleft vertical { settings.Int( "sidebar_width" ) }new' )
     stack_trace_window = vim.current.window
     one_third = int( vim.eval( 'winheight( 0 )' ) ) / 3
     self._stackTraceView = stack_trace.StackTraceView( self,
@@ -570,7 +661,7 @@ class DebugSession( object ):
 
     # Output/logging
     vim.current.window = code_window
-    vim.command( f'rightbelow { settings.Int( "bottombar_height", 10 ) }new' )
+    vim.command( f'rightbelow { settings.Int( "bottombar_height" ) }new' )
     output_window = vim.current.window
     self._outputView = output.DAPOutputView( output_window,
                                              self._api_prefix )
@@ -596,7 +687,7 @@ class DebugSession( object ):
     self.SetCurrentFrame( None )
 
   @RequiresUI()
-  def SetCurrentFrame( self, frame ):
+  def SetCurrentFrame( self, frame, reason = '' ):
     if not frame:
       self._stackTraceView.Clear()
       self._variablesView.Clear()
@@ -604,11 +695,16 @@ class DebugSession( object ):
     if not self._codeView.SetCurrentFrame( frame ):
       return False
 
-    if frame:
-      self._variablesView.SetSyntax( self._codeView.current_syntax )
-      self._stackTraceView.SetSyntax( self._codeView.current_syntax )
-      self._variablesView.LoadScopes( frame )
-      self._variablesView.EvaluateWatches()
+    # the codeView.SetCurrentFrame already checked the frame was valid and
+    # countained a valid source
+    self._variablesView.SetSyntax( self._codeView.current_syntax )
+    self._stackTraceView.SetSyntax( self._codeView.current_syntax )
+    self._variablesView.LoadScopes( frame )
+    self._variablesView.EvaluateWatches()
+
+    if reason == 'stopped':
+      self._breakpoints.ClearTemporaryBreakpoint( frame[ 'source' ][ 'path' ],
+                                                  frame[ 'line' ] )
 
     return True
 
@@ -737,13 +833,20 @@ class DebugSession( object ):
       commands = self._GetCommands( remote, 'attach' )
 
       for command in commands:
-        cmd = remote_exec_cmd + command[ : ]
+        cmd = remote_exec_cmd + command
 
         for index, item in enumerate( cmd ):
           cmd[ index ] = item.replace( '%PID%', pid )
 
         self._logger.debug( 'Running remote app: %s', cmd )
-        self._outputView.RunJobWithOutput( 'Remote', cmd )
+        self._remote_term = terminal.LaunchTerminal(
+            self._api_prefix,
+            {
+                'args': cmd,
+                'cwd': os.getcwd()
+            },
+            self._codeView._window,
+            self._remote_term )
     else:
       if atttach_config[ 'pidSelect' ] == 'ask':
         prop = atttach_config[ 'pidProperty' ]
@@ -782,8 +885,14 @@ class DebugSession( object ):
             full_cmd.append( item.replace( '%CMD%', command_line ) )
 
         self._logger.debug( 'Running remote app: %s', full_cmd )
-        self._outputView.RunJobWithOutput( 'Remote{}'.format( index ),
-                                           full_cmd )
+        self._remote_term = terminal.LaunchTerminal(
+            self._api_prefix,
+            {
+                'args': full_cmd,
+                'cwd': os.getcwd()
+            },
+            self._codeView._window,
+            self._remote_term )
 
 
   def _GetSSHCommand( self, remote ):
@@ -917,13 +1026,26 @@ class DebugSession( object ):
     if 'name' not in launch_config:
       launch_config[ 'name' ] = 'test'
 
+    def failure_handler( reason, msg ):
+      text = [
+        'Launch Failed',
+        '',
+        reason,
+        '',
+        'Use :VimspectorReset to close'
+      ]
+      self._splash_screen = utils.DisplaySplash( self._api_prefix,
+                                                 self._splash_screen,
+                                                 text )
+
+
     self._connection.DoRequest(
       lambda msg: self._OnLaunchComplete(),
       {
         'command': launch_config[ 'request' ],
         'arguments': launch_config
-      }
-    )
+      },
+      failure_handler )
 
 
   def _OnLaunchComplete( self ):
@@ -999,7 +1121,9 @@ class DebugSession( object ):
     if reason == 'changed':
       self._codeView.UpdateBreakpoint( bp )
     elif reason == 'new':
-      self._codeView.AddBreakpoints( None, bp )
+      self._codeView.AddBreakpoint( bp )
+    elif reason == 'removed':
+      self._codeView.RemoveBreakpoint( bp )
     else:
       utils.UserMessage(
         'Unrecognised breakpoint event (undocumented): {0}'.format( reason ),
@@ -1026,6 +1150,7 @@ class DebugSession( object ):
   def OnEvent_exited( self, message ):
     utils.UserMessage( 'The debugee exited with status code: {}'.format(
       message[ 'body' ][ 'exitCode' ] ) )
+    self.SetCurrentFrame( None )
 
   def OnEvent_process( self, message ):
     utils.UserMessage( 'The debugee was started: {}'.format(
@@ -1035,7 +1160,8 @@ class DebugSession( object ):
     pass
 
   def OnEvent_continued( self, message ):
-    pass
+    self._stackTraceView.OnContinued( message[ 'body' ] )
+    self._codeView.SetCurrentFrame( None )
 
   def Clear( self ):
     self._codeView.Clear()
@@ -1070,6 +1196,7 @@ class DebugSession( object ):
   def OnEvent_terminated( self, message ):
     # We will handle this when the server actually exists
     utils.UserMessage( "Debugging was terminated by the server." )
+    self.SetCurrentFrame( None )
 
   def OnEvent_output( self, message ):
     if self._outputView:
@@ -1110,6 +1237,26 @@ class DebugSession( object ):
 
   def ToggleBreakpoint( self, options ):
     return self._breakpoints.ToggleBreakpoint( options )
+
+  def RunTo( self, file_name, line ):
+    self.ClearTemporaryBreakpoints()
+    self.SetLineBreakpoint( file_name,
+                            line,
+                            { 'temporary': True },
+                            lambda: self.Continue() )
+
+
+  def ClearTemporaryBreakpoints( self ):
+    return self._breakpoints.ClearTemporaryBreakpoints()
+
+  def SetLineBreakpoint( self, file_name, line_num, options, then = None ):
+    return self._breakpoints.SetLineBreakpoint( file_name,
+                                                line_num,
+                                                options,
+                                                then )
+
+  def ClearLineBreakpoint( self, file_name, line_num ):
+    return self._breakpoints.ClearLineBreakpoint( file_name, line_num )
 
   def ClearBreakpoints( self ):
     if self._connection:

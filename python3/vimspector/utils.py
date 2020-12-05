@@ -24,6 +24,7 @@ import subprocess
 import shlex
 import collections
 import re
+import typing
 
 
 LOG_FILE = os.path.expanduser( os.path.join( '~', '.vimspector.log' ) )
@@ -44,12 +45,18 @@ _logger = logging.getLogger( __name__ )
 SetUpLogging( _logger )
 
 
-def BufferNumberForFile( file_name ):
-  return int( vim.eval( "bufnr( '{0}', 1 )".format( Escape( file_name ) ) ) )
+def BufferNumberForFile( file_name, create = True ):
+  return int( vim.eval( "bufnr( '{0}', {1} )".format(
+    Escape( file_name ),
+    int( create ) ) ) )
 
 
 def BufferForFile( file_name ):
   return vim.buffers[ BufferNumberForFile( file_name ) ]
+
+
+def BufferExists( file_name ):
+  return bool( int ( vim.eval( f"bufexists( '{ Escape( file_name ) }' )" ) ) )
 
 
 def NewEmptyBuffer():
@@ -134,7 +141,7 @@ def SetUpHiddenBuffer( buf, name ):
   buf.name = name
 
 
-def SetUpPromptBuffer( buf, name, prompt, callback ):
+def SetUpPromptBuffer( buf, name, prompt, callback, omnifunc ):
   # This feature is _super_ new, so only enable when available
   if not Exists( '*prompt_setprompt' ):
     return SetUpHiddenBuffer( buf, name )
@@ -147,6 +154,7 @@ def SetUpPromptBuffer( buf, name, prompt, callback ):
   buf.options[ 'buflisted' ] = False
   buf.options[ 'bufhidden' ] = 'hide'
   buf.options[ 'textwidth' ] = 0
+  buf.options[ 'omnifunc' ] = omnifunc
   buf.name = name
 
   vim.eval( "prompt_setprompt( {0}, '{1}' )".format( buf.number,
@@ -154,6 +162,12 @@ def SetUpPromptBuffer( buf, name, prompt, callback ):
   vim.eval( "prompt_setcallback( {0}, function( '{1}' ) )".format(
     buf.number,
     Escape( callback ) ) )
+
+  # This serves a few purposes, mainly to ensure that completion systems have
+  # something to work with. In particular it makes YCM use its identifier engine
+  # and you can config ycm to trigger semantic (annoyingly, synchronously) using
+  # some let g:ycm_auto_trggier
+  Call( 'setbufvar', buf.number, '&filetype', 'VimspectorPrompt' )
 
 
 def SetUpUIWindow( win ):
@@ -338,7 +352,7 @@ def SelectFromList( prompt, options ):
       if selection < 0 or selection >= len( options ):
         return None
       return options[ selection ]
-    except KeyboardInterrupt:
+    except ( KeyboardInterrupt, vim.error ):
       return None
 
 
@@ -352,7 +366,7 @@ def AskForInput( prompt, default_value = None ):
     try:
       return vim.eval( "input( '{}' {} )".format( Escape( prompt ),
                                                   default_option ) )
-    except KeyboardInterrupt:
+    except ( KeyboardInterrupt, vim.error ):
       return None
 
 
@@ -444,7 +458,7 @@ VAR_MATCH = re.compile(
       (?P<named>[_a-z][_a-z0-9]*)    |  # or An identifier - named param
       {(?P<braced>[_a-z][_a-z0-9]*)} |  # or An {identifier} - braced param
       {(?P<braceddefault>               # or An {id:default} - default param, as
-        (?P<defname>[_a-z][a-z0-9]*)    #   an ID
+        (?P<defname>[_a-z][_a-z0-9]*)   #   an ID
         :                               #   then a colon
         (?P<default>(?:[^}]|\})*)       #   then anything up to }, or a \}
       )}                             |  #
@@ -540,14 +554,31 @@ def ExpandReferencesInString( orig_s,
   return s
 
 
+def CoerceType( mapping: typing.Dict[ str, typing.Any ], key: str ):
+  DICT_TYPES = {
+    'json': json.loads,
+    's': str
+  }
+
+  parts = key.split( '#' )
+  if len( parts ) > 1 and parts[ -1 ] in DICT_TYPES.keys():
+    value = mapping.pop( key )
+
+    new_type = parts[ -1 ]
+    key = '#'.join( parts[ 0 : -1 ] )
+
+    mapping[ key ] = DICT_TYPES[ new_type ]( value )
+
+
 # TODO: Should we just run the substitution on the whole JSON string instead?
 # That woul dallow expansion in bool and number values, such as ports etc. ?
 def ExpandReferencesInDict( obj, mapping, calculus, user_choices ):
-  for k in obj.keys():
+  for k in list( obj.keys() ):
     obj[ k ] = ExpandReferencesInObject( obj[ k ],
                                          mapping,
                                          calculus,
                                          user_choices )
+    CoerceType( obj, k )
 
 
 def ParseVariables( variables_list,
@@ -560,9 +591,10 @@ def ParseVariables( variables_list,
   if not isinstance( variables_list, list ):
     variables_list = [ variables_list ]
 
+  variables: typing.Dict[ str, typing.Any ]
   for variables in variables_list:
     new_mapping.update( new_variables )
-    for n, v in variables.items():
+    for n, v in list( variables.items() ):
       if isinstance( v, dict ):
         if 'shell' in v:
           new_v = v.copy()
@@ -597,12 +629,17 @@ def ParseVariables( variables_list,
                                                        calculus,
                                                        user_choices )
 
+      CoerceType( new_variables, n )
+
   return new_variables
 
 
 def DisplayBaloon( is_term, display ):
   if not is_term:
     display = '\n'.join( display )
+    # To enable the Windows GUI to display the balloon correctly
+    # Refer https://github.com/vim/vim/issues/1512#issuecomment-492070685
+    vim.eval( "balloon_show( '' )" )
 
   vim.eval( "balloon_show( {0} )".format(
     json.dumps( display ) ) )
@@ -634,13 +671,6 @@ def Call( vimscript_function, *args ):
 
   call += ')'
   return vim.eval( call )
-
-
-def SignDefined( name ):
-  if Exists( "*sign_getdefined" ):
-    return int( vim.eval( f"len( sign_getdefined( '{ Escape( name ) }' ) )" ) )
-
-  return False
 
 
 MEMO = {}
@@ -711,7 +741,7 @@ def GetVimValue( vim_dict, name, default=None ):
   # FIXME: use 'encoding' ?
   try:
     value = vim_dict[ name ]
-  except KeyError:
+  except ( KeyError, vim.error ):
     return default
 
   if isinstance( value, bytes ):
@@ -722,7 +752,7 @@ def GetVimValue( vim_dict, name, default=None ):
 def GetVimList( vim_dict, name, default=None ):
   try:
     value = vim_dict[ name ]
-  except KeyError:
+  except ( KeyError, vim.error ):
     return default
 
   if not isinstance( value, collections.abc.Iterable ):
@@ -730,7 +760,6 @@ def GetVimList( vim_dict, name, default=None ):
                       f"{ type( value ) }" )
 
   return [ i.decode( 'utf-8' ) if isinstance( i, bytes ) else i for i in value ]
-
 
 
 def GetVimspectorBase():
@@ -756,3 +785,9 @@ def WindowID( window, tab=None ):
   if tab is None:
     tab = window.tabpage
   return int( Call( 'win_getid', window.number, tab.number ) )
+
+
+def UseWinBar():
+  # Buggy neovim doesn't render correctly when the WinBar is defined:
+  # https://github.com/neovim/neovim/issues/12689
+  return not int( Call( 'has', 'nvim' ) )
