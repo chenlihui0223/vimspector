@@ -23,7 +23,7 @@
 
 Based on JSON.minify.js: https://github.com/getify/JSON.minify
 
-Contributers:
+Contributors:
   - Gerald Storer
     - Contributed original version
   - Felipe Machado
@@ -40,7 +40,7 @@ import re
 # Vimspector modification: strip_space defaults to False; we don't actually want
 # to minify - we just want to strip comments.
 def minify(string, strip_space=False):
-    tokenizer = re.compile('"|(/\*)|(\*/)|(//)|\n|\r')
+    tokenizer = re.compile(r'"|(/\*)|(\*/)|(//)|\n|\r')
     end_slashes_re = re.compile(r'(\\)*$')
 
     in_string = False

@@ -15,8 +15,10 @@
 
 import platform
 import os
+from vimspector.core_utils import memoize, NormalizePath
 
 
+@memoize
 def GetOS():
   if platform.system() == 'Darwin':
     return 'macos'
@@ -24,6 +26,35 @@ def GetOS():
     return 'windows'
   else:
     return 'linux'
+
+
+@memoize
+def GetPlatform():
+  machine = platform.machine()
+
+  try:
+    from vimspector.vendor import cpuinfo
+  except Exception:
+    return 'unknown'
+
+  machine_info = cpuinfo._parse_arch( machine )
+
+  machine_map = {
+    ( 'X86_64', 64 ): 'x86_64',
+    ( 'X86_32', 32 ): 'x86',
+    ( 'ARM_8', 64 ): 'arm64',
+    ( 'ARM_7', 32 ): 'armv7'
+  }
+
+  try:
+    return machine_map[ machine_info ]
+  except KeyError:
+    return 'unknown'
+
+
+@memoize
+def GetOSPlatform():
+  return GetOS() + '_' + GetPlatform()
 
 
 def mkdirs( p ):
@@ -38,6 +69,7 @@ def MakeInstallDirs( vimspector_base ):
   mkdirs( GetConfigDirForFiletype( vimspector_base, '_all' ) )
 
 
+@memoize
 def GetGadgetDir( vimspector_base ):
   return os.path.join( os.path.abspath( vimspector_base ), 'gadgets', GetOS() )
 
@@ -63,3 +95,11 @@ def GetConfigDirForFiletype( vimspector_base, filetype ):
                        'configurations',
                        GetOS(),
                        filetype )
+
+
+def GetSupportDir():
+  return NormalizePath(
+    os.path.join( os.path.dirname( __file__ ),
+                  '..',
+                  '..',
+                  'support' ) )

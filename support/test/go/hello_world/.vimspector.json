@@ -1,14 +1,37 @@
 {
   "configurations": {
-    "run": {
+    "run-delve": {
+      "adapter": "delve",
+      "configuration": {
+        "request": "launch",
+        "mode": "debug", // debug|test
+        "program": "${workspaceRoot}",
+        "dlvCwd": "${workspaceRoot}"
+
+        // "args": [],
+        // "buildFlags": ...
+        // "stackTraceDepth": ...,
+        // "showGlobalVariables": true,
+      },
+      "breakpoints": {
+        "exception": {
+          "unrecovered-panic": "",
+          "runtime-fatal-throw": ""
+        }
+      }
+    },
+    "run-legacy": {
       "adapter": "vscode-go",
       "configuration": {
         "request": "launch",
         "program": "${workspaceRoot}/hello-world.go",
         "mode": "debug",
-        "dlvToolPath": "$HOME/go/bin/dlv",
-        "trace": true,
-        "env": { "GO111MODULE": "off" }
+        "trace": true
+      },
+      "breakpoints": {
+        "exception": {
+          "unrecovered-panic": ""
+        }
       }
     }
   }

@@ -19,6 +19,9 @@ import vim
 
 from vimspector import utils
 
+DEFAULT_SYNC_TIMEOUT = 5000
+DEFAULT_ASYNC_TIMEOUT = 15000
+
 
 class PendingRequest( object ):
   def __init__( self, msg, handler, failure_handler, expiry_id ):
@@ -29,32 +32,54 @@ class PendingRequest( object ):
 
 
 class DebugAdapterConnection( object ):
-  def __init__( self, handler, send_func ):
-    self._logger = logging.getLogger( __name__ )
-    utils.SetUpLogging( self._logger )
+  def __init__( self,
+                handlers,
+                session_id,
+                send_func,
+                sync_timeout = None,
+                async_timeout = None ):
+    self._logger = logging.getLogger( __name__ + '.' + str( session_id ) )
+    utils.SetUpLogging( self._logger, session_id )
+
+    if not sync_timeout:
+      sync_timeout = DEFAULT_SYNC_TIMEOUT
+    if not async_timeout:
+      async_timeout = DEFAULT_ASYNC_TIMEOUT
 
     self._Write = send_func
     self._SetState( 'READ_HEADER' )
     self._buffer = bytes()
-    self._handler = handler
-    self._next_message_id = 0
+    self._handlers = handlers
+    self._session_id = session_id
+    self._next_message_id = 1
     self._outstanding_requests = {}
+    self.async_timeout = async_timeout
+    self.sync_timeout = sync_timeout
+
+  def GetSessionId( self ):
+    return self._session_id
 
   def DoRequest( self,
                  handler,
                  msg,
                  failure_handler=None,
-                 timeout = 15000 ):
+                 timeout = None ):
+
+    if timeout is None:
+      timeout = self.async_timeout
+
     this_id = self._next_message_id
     self._next_message_id += 1
 
     msg[ 'seq' ] = this_id
     msg[ 'type' ] = 'request'
 
-    # TODO/FIXME: This is so messy
     expiry_id = vim.eval(
-      'timer_start( {}, "vimspector#internal#channel#Timeout" )'.format(
-        timeout ) )
+      'timer_start( {}, '
+      '             function( "vimspector#internal#channel#Timeout", '
+      '                       [ {} ] ) )'.format(
+        timeout,
+        self._session_id ) )
 
     request = PendingRequest( msg,
                               handler,
@@ -66,8 +91,11 @@ class DebugAdapterConnection( object ):
       self._AbortRequest( request, 'Unable to send message' )
 
 
-  def DoRequestSync( self, msg, timeout = 5000 ):
+  def DoRequestSync( self, msg, timeout = None ):
     result = {}
+
+    if timeout is None:
+      timeout = self.sync_timeout
 
     def handler( msg ):
       result[ 'response' ] = msg
@@ -78,10 +106,10 @@ class DebugAdapterConnection( object ):
 
     self.DoRequest( handler, msg, failure_handler, timeout )
 
-    bug_catcher = 1000
-    while not result and bug_catcher >= 0:
+    to_wait = timeout + 1000
+    while not result and to_wait >= 0:
       vim.command( 'sleep 10m' )
-      bug_catcher -= 10
+      to_wait -= 10
 
     if result.get( 'exception' ) is not None:
       raise result[ 'exception' ]
@@ -124,7 +152,7 @@ class DebugAdapterConnection( object ):
 
   def Reset( self ):
     self._Write = None
-    self._handler = None
+    self._handlers = None
 
     while self._outstanding_requests:
       _, request = self._outstanding_requests.popitem()
@@ -169,6 +197,10 @@ class DebugAdapterConnection( object ):
       self._headers = {}
 
   def _SendMessage( self, msg ):
+    if not self._Write:
+      # Connection was destroyed
+      return False
+
     msg = json.dumps( msg )
     self._logger.debug( 'Sending Message: {0}'.format( msg ) )
 
@@ -221,19 +253,23 @@ class DebugAdapterConnection( object ):
     self._buffer = self._buffer[ content_length : ]
 
     # self._logger.debug( 'Message received (raw): %s', payload )
-
-    message = json.loads( payload )
-
-    self._logger.debug( 'Message received: {0}'.format( message ) )
-
     # We read the message, so the next time we get data from the socket it must
     # be a header.
     self._SetState( 'READ_HEADER' )
+
+    try:
+      message = json.loads( payload, strict = False )
+    except Exception:
+      self._logger.exception( "Invalid message received: %s", payload )
+      raise
+
+    self._logger.debug( 'Message received: {0}'.format( message ) )
+
     self._OnMessageReceived( message )
 
 
   def _OnMessageReceived( self, message ):
-    if not self._handler:
+    if not self._handlers:
       return
 
     if message[ 'type' ] == 'response':
@@ -255,36 +291,38 @@ class DebugAdapterConnection( object ):
           request.handler( message )
       else:
         reason = message.get( 'message' )
-        if not message:
-          fmt = message.get( 'body', {} ).get( 'error', {} ).get( 'format' )
-          if fmt:
-            # TODO: Actually make this work
-            reason = fmt
-          else:
-            reason = 'No reason'
+        error = message.get( 'body', {} ).get( 'error', {} )
+        if error:
+          try:
+            fmt = error[ 'format' ]
+            variables = error.get( 'variables', {} )
+            reason = fmt.format( **variables )
+          except Exception:
+            self._logger.exception( "Failed to parse error, using default: %s",
+                                    error )
 
-        self._logger.error( 'Request failed: {0}'.format( reason ) )
         if request.failure_handler:
+          self._logger.info( 'Request failed (handled): %s', reason )
           request.failure_handler( reason, message )
-        elif 'OnFailure' in dir( self._handler ):
-          self._handler.OnFailure( reason, request.msg, message )
         else:
-          utils.UserMessage( 'Request failed: {0}'.format( reason ) )
+          self._logger.error( 'Request failed (unhandled): %s', reason )
+          for h in self._handlers:
+            if 'OnFailure' in dir( h ):
+              if h.OnFailure( reason, request.msg, message ):
+                break
+
     elif message[ 'type' ] == 'event':
       method = 'OnEvent_' + message[ 'event' ]
-      if method in dir( self._handler ):
-        getattr( self._handler, method )( message )
-      else:
-        utils.UserMessage( 'Unhandled event: {0}'.format( message[ 'event' ] ),
-                           persist = True )
+      for h in self._handlers:
+        if method in dir( h ):
+          if getattr( h, method )( message ):
+            break
     elif message[ 'type' ] == 'request':
       method = 'OnRequest_' + message[ 'command' ]
-      if method in dir( self._handler ):
-        getattr( self._handler, method )( message )
-      else:
-        utils.UserMessage(
-          'Unhandled request: {0}'.format( message[ 'command' ] ),
-          persist = True )
+      for h in self._handlers:
+        if method in dir( h ):
+          if getattr( h, method )( message ):
+            break
 
 
 def _KillTimer( request ):

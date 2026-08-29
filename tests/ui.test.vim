@@ -1,11 +1,13 @@
+scriptencoding utf-8
 let s:fn='../support/test/python/simple_python/main.py'
 
 function! SetUp()
+  let g:vimspector_ui_mode = get( s:, 'vimspector_ui_mode', 'horizontal' )
   call vimspector#test#setup#SetUpWithMappings( 'HUMAN' )
 endfunction
 
-function! ClearDown()
-  call vimspector#test#setup#ClearDown()
+function! TearDown()
+  call vimspector#test#setup#TearDown()
 endfunction
 
 function! s:StartDebugging()
@@ -16,12 +18,17 @@ function! s:StartDebugging()
   call vimspector#test#signs#AssertCursorIsAtLineInBuffer( s:fn, 23, 1 )
 endfunction
 
+function! SetUp_Test_StandardLayout()
+  call vimspector#test#setup#PushOption( 'columns', 200 )
+endfunction
+
 function! Test_StandardLayout()
   call s:StartDebugging()
 
   call vimspector#StepOver()
   call vimspector#test#signs#AssertCursorIsAtLineInBuffer( s:fn, 25, 1 )
 
+  call assert_equal( 'horizontal', g:vimspector_session_windows.mode )
   call assert_equal(
         \ [ 'row', [
         \   [ 'col', [
@@ -42,6 +49,248 @@ function! Test_StandardLayout()
   call vimspector#test#setup#Reset()
   %bwipe!
 endfunction
+
+function! TearDown_Test_StandardLayout()
+  call vimspector#test#setup#PopOption( 'columns' )
+endfunction
+
+function! SetUp_Test_NarrowLayout()
+  call vimspector#test#setup#PushOption( 'columns', 100 )
+  let s:vimspector_ui_mode = 'vertical'
+endfunction
+
+function! Test_NarrowLayout()
+  call SkipNeovim()
+  call s:StartDebugging()
+
+  call vimspector#StepOver()
+  call vimspector#test#signs#AssertCursorIsAtLineInBuffer( s:fn, 25, 1 )
+
+  call assert_equal( 'vertical', g:vimspector_session_windows.mode )
+  call assert_equal(
+        \ [ 'col', [
+        \   [ 'row', [
+        \     [ 'leaf', g:vimspector_session_windows.variables ],
+        \     [ 'leaf', g:vimspector_session_windows.watches ],
+        \     [ 'leaf', g:vimspector_session_windows.stack_trace ],
+        \   ] ],
+        \   [ 'leaf', g:vimspector_session_windows.code ],
+        \   [ 'leaf', g:vimspector_session_windows.terminal ],
+        \   [ 'leaf', g:vimspector_session_windows.output ],
+        \ ] ],
+        \ winlayout( g:vimspector_session_windows.tabpage ) )
+
+  call vimspector#test#setup#Reset()
+  %bwipe!
+endfunction
+
+function! TearDown_Test_NarrowLayout()
+  unlet s:vimspector_ui_mode
+  call vimspector#test#setup#PopOption( 'columns' )
+endfunction
+
+function! SetUp_Test_AutoLayoutTerminalVert()
+  let s:vimspector_ui_mode = 'auto'
+  call vimspector#test#setup#PushOption( 'columns', 250 )
+  call vimspector#test#setup#PushOption( 'lines', 30 )
+endfunction
+
+function! Test_AutoLayoutTerminalVert()
+  call s:StartDebugging()
+
+  call vimspector#StepOver()
+  call vimspector#test#signs#AssertCursorIsAtLineInBuffer( s:fn, 25, 1 )
+
+  call assert_equal( 'horizontal', g:vimspector_session_windows.mode )
+  call assert_equal(
+        \ [ 'row', [
+        \   [ 'col', [
+        \     [ 'leaf', g:vimspector_session_windows.variables ],
+        \     [ 'leaf', g:vimspector_session_windows.watches ],
+        \     [ 'leaf', g:vimspector_session_windows.stack_trace ],
+        \   ] ],
+        \   [ 'col', [
+        \     [ 'row', [
+        \       [ 'leaf', g:vimspector_session_windows.code ],
+        \       [ 'leaf', g:vimspector_session_windows.terminal ],
+        \     ] ],
+        \     [ 'leaf', g:vimspector_session_windows.output ],
+        \   ] ]
+        \ ] ],
+        \ winlayout( g:vimspector_session_windows.tabpage ) )
+
+  call vimspector#test#setup#Reset()
+  %bwipe!
+endfunction
+
+function! TearDown_Test_AutoLayoutTerminalVert()
+  unlet s:vimspector_ui_mode
+  call vimspector#test#setup#PopOption( 'lines' )
+  call vimspector#test#setup#PopOption( 'columns' )
+endfunction
+
+function! SetUp_Test_AutoLayoutTerminalHorizVert()
+  let s:vimspector_ui_mode = 'auto'
+  " Wide enough to be horizontal layout, but not wide enough to fully fit the
+  " terminal, with enough rows to fit the max terminal below
+  call vimspector#test#setup#PushOption( 'columns',
+        \ 50 + 82 + 3 + 2 + 12 )
+  call vimspector#test#setup#PushOption( 'lines', 50 )
+endfunction
+
+function! Test_AutoLayoutTerminalHorizVert()
+  call s:StartDebugging()
+
+  call vimspector#StepOver()
+  call vimspector#test#signs#AssertCursorIsAtLineInBuffer( s:fn, 25, 1 )
+
+  call assert_equal( 'horizontal', g:vimspector_session_windows.mode )
+  call assert_equal(
+        \ [ 'row', [
+        \   [ 'col', [
+        \     [ 'leaf', g:vimspector_session_windows.variables ],
+        \     [ 'leaf', g:vimspector_session_windows.watches ],
+        \     [ 'leaf', g:vimspector_session_windows.stack_trace ],
+        \   ] ],
+        \   [ 'col', [
+        \     [ 'leaf', g:vimspector_session_windows.code ],
+        \     [ 'leaf', g:vimspector_session_windows.terminal ],
+        \     [ 'leaf', g:vimspector_session_windows.output ],
+        \   ] ]
+        \ ] ],
+        \ winlayout( g:vimspector_session_windows.tabpage ) )
+
+  call vimspector#test#setup#Reset()
+  %bwipe!
+endfunction
+
+function! TearDown_Test_AutoLayoutTerminalHorizVert()
+  unlet s:vimspector_ui_mode
+  call vimspector#test#setup#PopOption( 'lines' )
+  call vimspector#test#setup#PopOption( 'columns' )
+endfunction
+
+function! SetUp_Test_AutoLayoutTerminalHorizVertButNotEnoughLines()
+  let s:vimspector_ui_mode = 'auto'
+  " Wide enough to be horizontal layout, but not wide enough to fully fit the
+  " terminal, with enough rows to fit the max terminal below, but there are not
+  " enough lines to do this
+  call vimspector#test#setup#PushOption( 'columns',
+        \ 50 + 82 + 3 + 2 + 12 )
+  call vimspector#test#setup#PushOption( 'lines', 20 )
+endfunction
+
+function! Test_AutoLayoutTerminalHorizVertButNotEnoughLines()
+  call s:StartDebugging()
+
+  call vimspector#StepOver()
+  call vimspector#test#signs#AssertCursorIsAtLineInBuffer( s:fn, 25, 1 )
+
+  call assert_equal( 'horizontal', g:vimspector_session_windows.mode )
+  call assert_equal(
+        \ [ 'row', [
+        \   [ 'col', [
+        \     [ 'leaf', g:vimspector_session_windows.variables ],
+        \     [ 'leaf', g:vimspector_session_windows.watches ],
+        \     [ 'leaf', g:vimspector_session_windows.stack_trace ],
+        \   ] ],
+        \   [ 'col', [
+        \     [ 'row', [
+        \       [ 'leaf', g:vimspector_session_windows.code ],
+        \       [ 'leaf', g:vimspector_session_windows.terminal ],
+        \     ] ],
+        \     [ 'leaf', g:vimspector_session_windows.output ],
+        \   ] ],
+        \ ] ],
+        \ winlayout( g:vimspector_session_windows.tabpage ) )
+
+  call vimspector#test#setup#Reset()
+  %bwipe!
+endfunction
+
+function! TearDown_Test_AutoLayoutTerminalHorizVertButNotEnoughLines()
+  unlet s:vimspector_ui_mode
+  call vimspector#test#setup#PopOption( 'lines' )
+  call vimspector#test#setup#PopOption( 'columns' )
+endfunction
+
+function! SetUp_Test_AutoLayoutTerminalHoriz()
+  let s:vimspector_ui_mode = 'vertical'
+  " Vertical layout, but we split the terminal horizonally
+  call vimspector#test#setup#PushOption( 'columns', 200 )
+  call vimspector#test#setup#PushOption( 'lines', 50 )
+endfunction
+
+function! Test_AutoLayoutTerminalHoriz()
+  call s:StartDebugging()
+
+  call vimspector#StepOver()
+  call vimspector#test#signs#AssertCursorIsAtLineInBuffer( s:fn, 25, 1 )
+
+  call assert_equal( 'vertical', g:vimspector_session_windows.mode )
+  call assert_equal(
+        \ [ 'col', [
+        \   [ 'row', [
+        \     [ 'leaf', g:vimspector_session_windows.variables ],
+        \     [ 'leaf', g:vimspector_session_windows.watches ],
+        \     [ 'leaf', g:vimspector_session_windows.stack_trace ],
+        \   ] ],
+        \   [ 'row', [
+        \     [ 'leaf', g:vimspector_session_windows.code ],
+        \     [ 'leaf', g:vimspector_session_windows.terminal ],
+        \   ] ],
+        \   [ 'leaf', g:vimspector_session_windows.output ],
+        \ ] ],
+        \ winlayout( g:vimspector_session_windows.tabpage ) )
+
+  call vimspector#test#setup#Reset()
+  %bwipe!
+endfunction
+
+function! TearDown_Test_AutoLayoutTerminalHoriz()
+  unlet s:vimspector_ui_mode
+  call vimspector#test#setup#PopOption( 'lines' )
+  call vimspector#test#setup#PopOption( 'columns' )
+endfunction
+
+function! SetUp_Test_AutoLayoutTerminalVertVert()
+  let s:vimspector_ui_mode = 'auto'
+  " Not wide enough to go horizontal, but wide enough to put the terminal and
+  " code vertically split
+  call vimspector#test#setup#PushOption( 'columns', 80 )
+  call vimspector#test#setup#PushOption( 'lines', 50 )
+endfunction
+
+function! Test_AutoLayoutTerminalVertVert()
+  call s:StartDebugging()
+
+  call vimspector#StepOver()
+  call vimspector#test#signs#AssertCursorIsAtLineInBuffer( s:fn, 25, 1 )
+
+  call assert_equal( 'vertical', g:vimspector_session_windows.mode )
+  call assert_equal(
+        \ [ 'col', [
+        \   [ 'row', [
+        \     [ 'leaf', g:vimspector_session_windows.variables ],
+        \     [ 'leaf', g:vimspector_session_windows.watches ],
+        \     [ 'leaf', g:vimspector_session_windows.stack_trace ],
+        \   ] ],
+        \   [ 'leaf', g:vimspector_session_windows.code ],
+        \   [ 'leaf', g:vimspector_session_windows.terminal ],
+        \   [ 'leaf', g:vimspector_session_windows.output ],
+        \ ] ],
+        \ winlayout( g:vimspector_session_windows.tabpage ) )
+
+  call vimspector#test#setup#Reset()
+  %bwipe!
+endfunction
+
+function! TearDown_Test_AutoLayoutTerminalVertVert()
+  unlet s:vimspector_ui_mode
+  call vimspector#test#setup#PopOption( 'lines' )
+  call vimspector#test#setup#PopOption( 'columns' )
+endfunction
+
 
 function! Test_CloseVariables()
   call s:StartDebugging()
@@ -395,6 +644,7 @@ endfunction
 
 
 function! Test_CustomWinBar()
+  call SkipNeovim()
   augroup TestCustomWinBar
     au!
     au User VimspectorUICreated call s:CustomWinBar()
@@ -406,6 +656,94 @@ function! Test_CustomWinBar()
         \ menu_info( 'WinBar' ).submenus )
 
   au! TestCustomWinBar
+  call vimspector#test#setup#Reset()
+  %bwipe!
+endfunction
+
+function! Test_NoMouseNoWinBar()
+  call SkipNeovim()
+  call vimspector#test#setup#PushOption( 'mouse', '' )
+  call s:StartDebugging()
+  call assert_equal( {}, menu_info( 'WinBar' ) )
+
+  call vimspector#test#setup#Reset()
+  %bwipe!
+endfunction
+
+function! TearDown_Test_NoMouseNoWinBar()
+  call vimspector#test#setup#PopOption( 'mouse' )
+endfunction
+
+function! Test_VimspectorJumpedToFrame()
+  let s:ended = 0
+  let s:au_visited_buffers = {}
+
+  augroup TestVimspectorJumpedToFrame
+    au!
+    au User VimspectorJumpedToFrame
+          \ let s:au_visited_buffers[ bufname() ] = get( s:au_visited_buffers,
+          \                                              bufname(),
+          \                                              0 ) + 1
+    au User VimspectorDebugEnded
+          \ let s:ended = 1
+  augroup END
+
+  lcd ../support/test/python/multiple_files
+  edit moo.py
+
+  let moo = 'moo.py'
+  let cow = getcwd() . '/cow.py'
+
+  call vimspector#SetLineBreakpoint( 'moo.py', 13 )
+  call vimspector#Launch()
+  call vimspector#test#signs#AssertCursorIsAtLineInBuffer( 'moo.py', 1, 1 )
+  call vimspector#test#signs#AssertPCIsAtLineInBuffer( 'moo.py', 1 )
+  let expected = {}
+  let expected[ moo ] = 1
+  call assert_equal( expected, s:au_visited_buffers )
+
+  call vimspector#Continue()
+  call vimspector#test#signs#AssertCursorIsAtLineInBuffer( 'moo.py', 13, 1 )
+  call vimspector#test#signs#AssertPCIsAtLineInBuffer( 'moo.py', 13 )
+  let expected[ moo ] += 1
+  call assert_equal( expected, s:au_visited_buffers )
+
+  call vimspector#SetLineBreakpoint( 'cow.py', 2 )
+  call vimspector#Continue()
+  call vimspector#test#signs#AssertCursorIsAtLineInBuffer( 'cow.py', 2, 1 )
+  call vimspector#test#signs#AssertPCIsAtLineInBuffer( 'cow.py', 2 )
+  let expected[ cow ] = 1
+  call assert_equal( expected, s:au_visited_buffers )
+
+  VimspectorReset
+  call WaitForAssert( { -> assert_equal( s:ended, 1 ) } )
+
+  au! TestVimspectorJumpedToFrame
+  unlet! s:au_visited_buffers
+  unlet! s:ended
+
+  call vimspector#test#setup#Reset()
+  lcd -
+  %bwipe!
+endfunction
+
+function! Test_DebugInfo_NotConnected()
+  redir => debug_message
+  VimspectorDebugInfo
+  redir END
+
+  call assert_equal( 'Vimspector not connected, start a debug session first',
+        \ trim( debug_message ) )
+
+  call vimspector#test#setup#Reset()
+  %bwipe!
+endfunction
+
+function! Test_DebugInfo_Connected()
+  call s:StartDebugging()
+
+  " Just make sure there are no errors for now
+  VimspectorDebugInfo
   call vimspector#test#setup#Reset()
   %bwipe!
 endfunction

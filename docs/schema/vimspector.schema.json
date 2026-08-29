@@ -3,7 +3,7 @@
   "$id": "https://puremourning.github.io/vimspector/schema/vimspector.schema.json",
   "definitions": {
     "variables": {
-      "description": "A mappoing of name/value pairs to set variables to be used elsewhere in the definition, or a list of such mappings.",
+      "description": "A mapping of name/value pairs to set variables to be used elsewhere in the definition, or a list of such mappings.",
       "properties": {
         "variables": {
           "oneOf": [
@@ -38,11 +38,174 @@
         ]
       }
     },
-    "adapter-common": {
+    "adapter-launchattach": {
+      "properties": {
+        "launch": {
+          "allOf": [
+            { "$ref": "#/definitions/adapter-remote" },
+            {
+              "properties": {
+                "delay": {
+                  "type": "string",
+                  "description": "A time in the format understood by :help :sleep to wait after running the attachCommand(s)"
+                }
+              }
+            }
+          ]
+        },
+        "attach": {
+          "allOf": [
+            { "$ref": "#/definitions/adapter-remote" },
+            {
+              "type": "object",
+              "required": [ "pidSelect" ],
+              "properties": {
+                "pidSelect": {
+                  "enum": [ "ask", "none" ]
+                },
+                "pidProperty": {
+                  "type": "string",
+                  "description": "The launch config property which the PID should be injected into. Required when 'pidSelect' is 'ask'."
+                },
+                "delay": {
+                  "type": "string",
+                  "description": "A time in the format understood by :help :sleep to wait after running the attachCommand(s)"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "adapter-remote": {
+      "type": "object",
+      "properties": {
+        "remote": {
+          "type": "object",
+          "description": "Configures how Vimspector will marshal remote debugging requests. When remote debugging, Vimspector will either ssh to 'account'@'host', docker exec -it to 'container' or work locally and run 'pidCommand', 'attachCommands', 'runCommands', etc. based on the 'remote-command' option in the debug configuration. If 'remote-command' is 'launch', it runs 'runCommand(s)', otherwise (it's 'attach') vimspector runs 'pidCommand', followed by 'attachCommand(s)'.Then it starts up the debug adapter with the debug configuration as normal. Usually this is configured with an 'attach' request (whether we remotely 'launched' or not). Once the initialization exchange is complete, Vimspector runs the optional 'initCompleteCommand' which can be used to force the application to break, e.g. by sending it SIGINT. This is required on some platforms which have buggy gdbservers (for example)",
+          "allOf": [
+            {
+              "anyOf": [
+                {
+                  "oneOf": [
+                    { "required": [ "host" ] },
+                    { "required": [ "container" ] }
+                  ]
+                },
+                {
+                  "not": {
+                    "required": [ "host", "container" ]
+                  }
+                }
+              ]
+            },
+            {
+              "properties": {
+                "account": {
+                  "type": "string",
+                  "description": "Remote account name used when ssh'ing. Defaults to the current user account."
+                },
+                "host": {
+                  "type": "string",
+                  "description": "Name of the remote host to connect to (via passwordless SSH or with e.g. sshpass if ssh['cmd'] specified)."
+                },
+                "container": {
+                  "type": "string",
+                  "description": "Name or container id of the docker run container to connect to (via docker exec). Note the container must already be running (Vimspector will not start it) and it must have the port forwarded to the host if subsequently connecting via a port (for example <tt>docker run -p 8765:8765 -it simple_python</tt>)."
+                },
+                "docker_args": {
+                  "type": "array",
+                  "items": {"type": "string"},
+                  "description": "Extra command line args to pass to docker exec."
+                },
+                "ssh": {
+                  "type": "object",
+                  "description": "Optional to customize the ssh client and its arguments to execute for remote-launch or remote-attach.",
+                  "properties": {
+                    "cmd": {
+                      "type": "array",
+                      "items": { "type": "string" },
+                      "description": "Command to execute SSH client."
+                    },
+                    "args": {
+                      "type": "array",
+                      "items": { "type": "string" },
+                      "description": "SSH client command arguments."
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "oneOf": [
+                {
+                  "allOf": [
+                    {
+                      "oneOf": [
+                        { "required": [ "attachCommand" ] },
+                        { "required": [ "attachCommands" ] }
+                      ]
+                    },
+                    {
+                      "properties": {
+                        "initCompleteCommand": {
+                          "type": "array",
+                          "items": { "type": "string" },
+                          "description": "For remote-attach. Remote command to execute after initialization of the debug adapter. Can be used to work around buggy attach behaviour on certain platforms (advanced usage). Can contain the special token %PID% which is replaced with the PID returned by 'pidCommand'"
+                        },
+                        "pidCommand": {
+                          "type": "array",
+                          "items": { "type": "string" },
+                          "description": "Required for remote-attach. Remote command to execute to return the PID to attach to."
+                        },
+                        "attachCommands": {
+                          "type": [ "array" ],
+                          "items": { "type": "array", "items": { "type": "string" } },
+                          "description": "For remote-attach. List of commands to execute remotely to set up the attach. Can contain the special token %PID% which is replaced with the PID returned by the remote 'pidCommand'."
+                        },
+                        "attachCommand": {
+                          "type": "array",
+                          "items": { "type": "string" },
+                          "description": "A single command to execute for remote-attach. Like attachCommands but for a single command. If attachCommands is supplied, this is not used."
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "allOf": [
+                    {
+                      "oneOf": [
+                        { "required": [ "runCommand" ] },
+                        { "required": [ "runCommands" ] }
+                      ]
+                    },
+                    {
+                      "properties": {
+                        "runCommands": {
+                          "type": [ "array" ],
+                          "items": { "type": "array", "items": { "type": "string" } },
+                          "description": "For remote-launch. List of commands to execute remotely to set up the launch. An entry in the array can be the special token '%CMD%' which is replaced with the evaluated 'remote-cmdLine' value in the debug configuration. This is useful to parameterize launcging remotely under something like gdbserver."
+                        },
+                        "runCommand": {
+                          "type": "array",
+                          "items": { "type": "string" },
+                          "description": "A single command to execute for remote-launch. Like runCommands but for a single command."
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "adapter": {
       "allOf": [
+        { "type": "object" },
         { "$ref": "#/definitions/variables" },
-        { "$ref": "#/definitions/adapter-remote" },
-        { "$ref": "#/definitions/adapter-attach" },
         {
           "properties": {
             "name": {
@@ -54,136 +217,55 @@
               "description": "Base debug configuration. Can be used to set default values for all debug configurations. When reading individual debug configurations from 'configurations', those configurations are merged with this object. Definitions in the debug configuration override anything in this object. Typical usage for this is to set the 'type' parameter, which some debug adapters are very picky about, or to set e.g. the path to an underlying debugger."
             }
           }
-        }
-      ]
-    },
-    "adapter-attach": {
-      "properties": {
-        "attach": {
-          "type": "object",
-          "required": [ "pidSelect" ],
-          "properties": {
-            "pidSelect": {
-              "enum": [ "ask", "none" ]
-            },
-            "pidProperty": {
-              "type": "string",
-              "description": "The launch config property which the PID should be injected into. Required when 'pidSelect' is 'ask'."
-            }
-          }
-        }
-      }
-    },
-    "adapter-remote": {
-      "properties": {
-        "remote": {
-          "type": "object",
-          "oneOf": [
-            {
-              "required": [
-                "host"
-              ]
-            },
-            {
-              "required": [
-                "container"
-              ]
-            }
-          ],
-          "description": "Configures how Vimspector will marshal remote debugging requests. When remote debugging, Vimspector will either ssh to 'account'@'host' or docker exec -it to 'container' and run 'pidCommand', 'attachCommands', 'runCommands', etc. based on the 'remote-command' option in the debug configuration. If 'remote-command' is 'launch', it runs 'runCommand(s)', otherwise (it's 'attach') vimspector runs 'pidCommand', followed by 'attachCommand(s)'.Then it starts up the debug adapter with the debug configuration as normal. Usually this is configured with an 'attach' request (whether we remotely 'launched' or not). Once the initialization exchange is complete, Vimspector runs the optional 'initCompleteCommand' which can be used to force the application to break, e.g. by sending it SIGINT. This is required on some platforms which have buggy gdbservers (for example)",
-          "properties": {
-            "account": {
-              "type": "string",
-              "description": "Remote account name used when ssh'ing. Defaults to the current user account."
-            },
-            "host": {
-              "type": "string",
-              "description": "Name of the remote host to connect to (via passwordless SSH)."
-            },
-            "container": {
-              "type": "string",
-              "description": "Name or container id of the docker run container to connect to (via docker exec -it)."
-            },
-            "pidCommand": {
-              "type": "array",
-              "items": { "type": "string" },
-              "description": "Required for remote-attach. Remote command to execute to return the PID to attach to."
-            },
-            "initCompleteCommand": {
-              "type": "array",
-              "items": { "type": "string" },
-              "description": "For remote-attach. Remote command to execute after initialization of the debug adapter. Can be used to work around buggy attach behaviour on certain platforms (advanced usage). Can contain the special token %PID% which is replaced with the PID returned by 'pidCommand'"
-            },
-            "attachCommands": {
-              "type": [ "array" ],
-              "items": { "type": "array", "items": { "type": "string" } },
-              "description": "For remote-attach. List of commands to execute remotely to set up the attach. Can contain the special token %PID% which is replaced with the PID returned by the remote 'pidCommand'."
-            },
-            "attachCommand": {
-              "type": "array",
-              "items": { "type": "string" },
-              "description": "A single command to execute for remote-attach. Like attachCommands but for a single command. If attachCommands is supplied, this is not used."
-            },
-            "runCommands": {
-              "type": [ "array" ],
-              "items": { "type": "array", "items": { "type": "string" } },
-              "description": "For remote-launch. List of commands to execute remotely to set up the launch. An entry in the array can be the special token '%CMD%' which is replaced with the evaluated 'remote-cmdLine' value in the debug configuration. This is useful to parameterize launcging remotely under something like gdbserver."
-            },
-            "runCommand": {
-              "type": "array",
-              "items": { "type": "string" },
-              "description": "A single command to execute for remote-launch. Like runCommands but for a single command."
-            }
-          }
-        }
-      }
-    },
-    "adapter": {
-      "oneOf": [
+        },
+        { "$ref": "#/definitions/adapter-launchattach" },
         {
-          "allOf": [
-            { "$ref": "#/definitions/adapter-common" },
+          "anyOf": [
+            { "required": [ "command" ] },
+            { "required": [ "port" ] },
             {
-              "required": [ "port" ],
+              "required": [ "command", "port" ],
               "properties": {
-                "port": {
-                  "oneOf": [
-                    {
-                      "type": "string",
-                      "enum": [ "ask" ]
-                    },
-                    {
-                      "type": "integer"
-                    }
-                  ],
-                  "description": "If supplied, indicates that a socket connection should be made to this port on 'localhost'. If the value is 'ask', then the user is asked to enter the port number to connect to."
+                "tty": {
+                  "type": "boolean",
+                  "description": "Set to True to launch 'command' in a terminal. Only valid when both 'command' and 'port' are supplied."
                 }
               }
-            }
+            },
+            { "required": [ "extends" ] }
           ]
         },
         {
-          "allOf": [
-            { "$ref": "#/definitions/adapter-common" },
-            {
-              "required": [ "command" ],
-              "properties": {
-                "command": {
-                  "type": [ "string", "array" ],
-                  "description": "Command line to execute the debug adapter.",
-                  "items": { "type": "string" }
-                },
-                "env": {
-                  "type": "object",
-                  "description": "Name/value pairs to set in the environment when starting the adapter."
-                },
-                "cwd": {
-                  "type": "string",
-                  "description": "Directory from which to start the adapter. Defaults to the working directory of the window on launch"
-                }
-              }
+          "properties": {
+            "host": {
+              "type": "string",
+              "default": "127.0.0.1",
+              "description": "Connect to this host in multi-session mode"
+            },
+            "port": {
+              "oneOf": [
+                { "type": "string" },
+                { "type": "integer" }
+              ],
+              "description": "If supplied, indicates that a socket connection should be made to this port on 'host'. If the value is 'ask', then the user is asked to enter the port number to connect to."
+            },
+            "extends": {
+              "type": "string",
+              "description": "Name of another adapter from which to inherit all properties"
+            },
+            "sync_timeout": {
+              "type": "number",
+              "description": "Timeout for synchronous requests to the adapter (in ms). Default is 5000"
+            },
+            "async_timeout": {
+              "type": "number",
+              "description": "Timeout for asynchronous requests to the adapter (in ms). Default is 15000"
+            },
+            "cwd": {
+              "type": "string",
+              "description": "Directory in which to start the adapter"
             }
-          ]
+          }
         }
       ]
     }
@@ -201,6 +283,12 @@
         "allOf": [
           { "$ref": "#/definitions/variables" },
           {
+            "oneOf": [
+              { "required": [ "adapter", "configuration" ] },
+              { "required": [ "extends" ] }
+            ]
+          },
+          {
             "type": "object",
             "properties": {
               "adapter": {
@@ -213,6 +301,10 @@
                   }
                 ]
               },
+              "extends": {
+                "type": "string",
+                "description": "Name of another configuration to inherit properties from."
+              },
               "remote-request": {
                 "enum": [ "launch", "attach" ],
                 "description": "When the 'remote' block is defined in the adapter configuration, this can be used to override the actual action taken (remotely). Usually the actual 'configuration' will contain 'request' of 'attach', but in order to remotely 'launch' the process (e.g. under gdbserver or equivalent), use remote-attach set to 'launch'"
@@ -220,6 +312,22 @@
               "remote-cmdLine": {
                 "type": [ "string", "array" ],
                 "description": "Defines the value of the special token %CMD% in remote-launch 'runCommand(s)'. The value is inserted into the command line where an entry matching '%CMD%' is found in 'runCommand(s)' command array."
+              },
+              "default": {
+                "type": "boolean",
+                "description": "When true, this configuration is picked by default"
+              },
+              "autoselect": {
+                "type": "boolean",
+                "description": "When false, this configuration is _never_ picked by default"
+              },
+              "filetypes": {
+                "type": "array",
+                "description": "List of Vim filetypes that this configuration applies to. The configuration is only used if one of the current filetypes appears in this list, or if this list is not supplied,"
+              },
+              "cwd": {
+                "type": "string",
+                "description": "Directory in which to start the adapter; overrides any set on the adapter. Does not necessarily affect the cwd of the debuggee, only the debug adapter."
               },
               "configuration": {
                 "type": "object",
@@ -237,12 +345,6 @@
               "breakpoints": {
                 "type": "object",
                 "properties": {
-                  "line": {
-                    "$comment": "TBA: Not supported yet"
-                  },
-                  "function": {
-                    "$comment": "TBA: Not supported yet"
-                  },
                   "exception": {
                     "type": "object",
                     "description": "Exception breakpoints configuration, mapping the server's exception filter to enabled/disable/default flag",

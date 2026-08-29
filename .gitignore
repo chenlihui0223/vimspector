@@ -6,6 +6,7 @@ tests/*.res
 tests/messages
 tests/debuglog
 test.log
+*.testlog
 gadgets/
 package/
 *.pyc
@@ -18,4 +19,8 @@ support/test/csharp/*.exe*
 .neomake.log
 configurations/
 venv/
-test-base/
+test-base*/
+tags
+Session.vim
+.vimspector.session
+tiny

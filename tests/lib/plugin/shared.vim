@@ -17,7 +17,7 @@ endif
 " When running into the timeout an exception is thrown, thus the function does
 " not return.
 func WaitFor(expr, ...)
-  let timeout = get(a:000, 0, 10000)
+  let timeout = get(a:000, 0, g:test_long_timeout)
   let slept = s:WaitForCommon(a:expr, v:null, timeout)
   if slept < 0
     throw 'WaitFor() timed out after ' . timeout . ' msec'
@@ -34,7 +34,7 @@ endfunc
 "
 " Return zero for success, one for failure (like the assert function).
 func WaitForAssert(assert, ...)
-  let timeout = get(a:000, 0, 5000)
+  let timeout = get(a:000, 0, g:test_timeout)
   if s:WaitForCommon(v:null, a:assert, timeout) < 0
     return 1
   endif
@@ -51,7 +51,18 @@ func s:WaitForCommon(expr, assert, timeout)
     let start = reltime()
   endif
 
+  let iters = 0
+
+  let failed_before = len( v:errors ) > 0
+
+  if failed_before
+    let timeout = 250
+  else
+    let timeout = a:timeout
+  endif
+
   while 1
+    let iters += 1
     let errors_before = len( v:errors )
     if type(a:expr) == v:t_func
       let success = a:expr()
@@ -65,7 +76,11 @@ func s:WaitForCommon(expr, assert, timeout)
       return slept
     endif
 
-    if slept >= a:timeout
+    if iters % 20 == 0
+      redraw!
+    endif
+
+    if slept >= timeout
       break
     endif
 
@@ -87,3 +102,97 @@ func s:WaitForCommon(expr, assert, timeout)
 
   return -1  " timed out
 endfunc
+
+function! ThisTestIsFlaky()
+  " Deprectaed for now
+endfunction
+
+" In vim, py3eval( 'None' ) returns v:none, which is not equal v:null
+" but are same type v:t_null
+" In neovim, py3eval( 'None' ) returns v:null, and v:none does not exist
+function! AssertNull( actual ) abort
+  return assert_equal( type( v:null ), type( a:actual ),
+      \ 'Expected null, but actually: ' .. a:actual  )
+endfunction
+
+function! AssertNotNull( actual ) abort
+  return assert_notequal( type( v:null ), type( a:actual ),
+      \ 'Expected not null, but actually: ' .. a:actual  )
+endfunction
+
+function! AssertMatchList( expected, actual ) abort
+  let ret = assert_equal( len( a:expected ), len( a:actual ), a:actual )
+  let len = min( [ len( a:expected ), len( a:actual ) ] )
+  let idx = 0
+  while idx < len
+    let ret += assert_match( a:expected[ idx ], a:actual[ idx ], idx )
+    let idx += 1
+  endwhile
+  return ret
+endfunction
+
+
+" Like getbufline() but support negative numbers for "start" and "end"
+" A negative numbers means that many lines before '$'
+function! GetBufLine( buf, start, end  = '$' )
+  if type( a:start ) != v:t_string && a:start < 0
+    let start = getbufinfo( a:buf )[ 0 ].linecount + a:start
+  else
+    let start = a:start
+  endif
+
+  if type( a:end ) != v:t_string && a:end < 0
+    let end = getbufinfo( a:buf )[ 0 ].linecount + a:end
+  else
+    let end = a:end
+  endif
+
+  return getbufline( a:buf, start, end )
+endfunction
+
+function! SkipNeovim() abort
+  if has( 'nvim' )
+    throw 'skipped: Neovim'
+  endif
+endfunction
+
+function! SkipOn( arch, system ) abort
+  if a:arch != v:null && trim( system( 'uname -m' ) ) != a:arch
+    return
+  endif
+
+  if a:system != v:null && trim( system( 'uname -s' ) ) != a:system
+    return
+  endif
+
+  throw 'skipped: Not on this architecture/platform ('
+        \ . a:arch
+        \ . '/'
+        \ . a:system .
+        \ ')'
+endfunction
+
+function! SkipIf( f, msg ) abort
+  if a:f()
+    throw 'skipped: ' . a:msg
+  endif
+endfunction
+
+function! FunctionBreakOnBrace() abort
+  " Annoyingly, the behaviour of gcc 8 differs from clang _and_ it differs
+  " between x86 and arm
+  " return trim( system( 'uname -m' ) ) ==# 'x86_64'
+        " \ && trim( system( 'uname -s' ) ) ==# 'Linux'
+  " However, the good news is that gcc-14 works consistently!
+  return v:false
+endfunction
+
+function MoveMouseToPositionInWindow( win_id, line, colum ) abort
+  let pos = screenpos( a:win_id, a:line, a:colum )
+  return MoveMouseTo( pos.row, pos.col )
+endfunction
+
+function! MoveMouseTo( screen_line, screen_column ) abort
+  call test_setmouse( a:screen_line, a:screen_column )
+  call feedkeys("\<MouseMove>", 'xt')
+endfunction

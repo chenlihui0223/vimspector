@@ -1,0 +1,176 @@
+name: Build
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  PythonLint:
+    runs-on: ubuntu-22.04
+    container: 'puremourning/vimspector:test-x86_64'
+    steps:
+    - uses: actions/checkout@v3
+    - name: 'Insatll requirements'
+      run: pip3 install --break-system-packages --user -r dev_requirements.txt
+    - name: 'Run flake8'
+      run: '$HOME/.local/bin/flake8 python3/ *.py'
+  VimscriptLint:
+    runs-on: 'ubuntu-22.04'
+    container: 'puremourning/vimspector:test-x86_64'
+    steps:
+    - uses: actions/checkout@v3
+    - name: 'Install requirements'
+      run: pip3 install --break-system-packages --user -r dev_requirements.txt
+    - name: 'Run vint'
+      run: $HOME/.local/bin/vint autoload/ compiler/ plugin/ tests/ syntax/
+
+  Linux:
+    runs-on: 'ubuntu-22.04'
+    container:
+      image: 'puremourning/vimspector:test-x86_64'
+      options: --cap-add=SYS_PTRACE --security-opt seccomp=unconfined
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime:
+          - vim
+          - nvim
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: 'Install requirements'
+      run: pip3 install --break-system-packages --user -r dev_requirements.txt
+
+    - run: |
+        go install github.com/go-delve/delve/cmd/dlv@latest
+      name: 'Install Delve for Go'
+
+    - uses: actions/cache@v4
+      with:
+        key: v1-gadgets-${{ runner.os }}-${{ hashFiles( 'python3/vimspector/gadgets.py' ) }}
+        path: gadgets/linux/download
+      name: Cache gadgets
+
+    - run: ${{ matrix.runtime }} --version
+      name: 'Print vim version information'
+
+    # The git config --global thing here is wierd, but required because
+    # otherwise git says that the ownership (root) of the repo is "dubious" when
+    # run inside the build container. The checkoutv2 above _also_ runs the
+    # following command, but shrug.
+    - run: |
+        cd support/vimspector_process_list
+        git config --global --add safe.directory /__w/vimspector/vimspector
+        go build
+      name: 'Build the process lister'
+
+    - run: |
+        export GOPATH=$HOME/go
+        ./run_tests --exe ${{ matrix.runtime }} --basedir $(pwd) --install --update --report messages --quiet
+      name: 'Run the tests'
+      id: run_tests
+      env:
+        VIMSPECTOR_MIMODE: gdb
+
+    - name: "Upload test logs"
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: 'test-logs-${{ runner.os }}-${{ matrix.runtime }}'
+        path: 'tests/logs/**/*'
+
+    # - name: Start SSH session if failed
+    #   uses: luchihoratiu/debug-via-ssh@main
+    #   if: failure()
+    #   with:
+    #     NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+    #     SSH_PASS: ${{ secrets.SSH_PASS }}
+
+  MacOS:
+    runs-on: 'macos-15'
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime:
+          - vim
+          # - nvim ; MacOS in GHA is so slow, this seems to cause lots of
+          # flakiness for neovim and I have like 0 patience with trying to
+          # understand why.
+    steps:
+    - uses: actions/checkout@v3
+
+    - run: |
+        brew update-reset
+        brew doctor || true
+        brew cleanup || true
+        for p in vim go tcl-tk@8 llvm lua luajit love neovim coreutils; do
+          brew install $p || brew outdated $p || brew upgrade $p
+        done
+        brew reinstall icu4c
+        brew link --overwrite python
+        brew link --overwrite vim
+        brew link --overwrite go
+        # latest neovim doesn't work on python 3.12
+        # https://github.com/neovim/pynvim/issues/538
+        pip3 install --break-system-packages --user 'pynvim @ git+https://github.com/neovim/pynvim'
+      name: 'Install vim and deps'
+
+    - name: 'Install requirements'
+      run: pip3 install --break-system-packages --user -r dev_requirements.txt
+
+    - run: go install github.com/go-delve/delve/cmd/dlv@latest
+      name: 'Install Delve for Go'
+
+    - run: |
+        cd support/vimspector_process_list
+        go build
+      name: 'Build the process lister'
+
+    - uses: actions/cache@v4
+      with:
+        key: v1-gadgets-${{ runner.os }}-${{ hashFiles( 'python3/vimspector/gadgets.py' ) }}
+        path: gadgets/macos/download
+      name: Cache gadgets
+
+    - name: 'Set up node 18'
+      uses: actions/setup-node@v3
+      with:
+        node-version: 18
+
+    - name: 'Install .NET Core SDK 6.0'
+      uses: actions/setup-dotnet@v3
+      with:
+        dotnet-version: 6.0.x
+
+    - run: ${{ matrix.runtime }} --version
+      name: 'Print vim version information'
+
+    - run: |
+        ./run_tests --exe ${{ matrix.runtime }} --basedir $(pwd) --install --update --report messages --quiet
+      name: 'Run the tests'
+      id: run_tests
+      env:
+        VIMSPECTOR_MIMODE: lldb
+
+    - name: "Upload test logs"
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: 'test-logs-${{ runner.os }}-${{ matrix.runtime }}'
+        path: 'tests/logs/**/*'
+
+    # - name: Start SSH session for working out why debugging don't work
+    #   uses: luchihoratiu/debug-via-ssh@main
+    #   if: failure() || cancelled()
+    #   with:
+    #     NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+    #     SSH_PASS: ${{ secrets.SSH_PASS }}
+

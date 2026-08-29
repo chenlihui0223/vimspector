@@ -19,62 +19,93 @@ let s:save_cpo = &cpoptions
 set cpoptions&vim
 " }}}
 
-function! s:_OnServerData( channel, data ) abort
-  if !exists( 's:ch' ) || s:ch isnot a:channel
+" Key: session_id
+" Value: channel id
+let s:channels = {}
+
+" Key: session_id
+" Value: job id
+let s:jobs = {}
+
+function! s:_OnServerData( session_id, channel, data ) abort
+  if !has_key( s:channels, a:session_id ) ||
+        \ s:channels[ a:session_id ] isnot a:channel
     return
   endif
 
-  py3 << EOF
-_vimspector_session.OnChannelData( vim.eval( 'a:data' ) )
-EOF
+  py3 _VimspectorSession( vim.eval( 'a:session_id' ) ).OnChannelData(
+        \ vim.eval( 'a:data' ) )
 endfunction
 
-function! s:_OnClose( channel ) abort
-  if !exists( 's:ch' ) || s:ch isnot a:channel
+function! s:_OnClose( session_id, channel ) abort
+  if !has_key( s:channels, a:session_id ) ||
+        \ s:channels[ a:session_id ] isnot a:channel
     return
   endif
 
   echom 'Channel closed'
   redraw
-  unlet s:ch
-  py3 _vimspector_session.OnServerExit( 0 )
+  unlet s:channels[ a:session_id ]
+  py3 _VimspectorSession( vim.eval( 'a:session_id' ) ).OnServerExit( 0 )
 endfunction
 
-function! vimspector#internal#channel#StartDebugSession( config ) abort
+function! s:_OnJobStdErr( session_id, channel, data ) abort
+  if !has_key( s:jobs, a:session_id ) ||
+        \ ch_getjob( a:channel ) isnot s:jobs[ a:session_id ]
+    call ch_log( 'Get data after process exit' )
+    return
+  endif
 
-  if exists( 's:ch' )
+  py3 _VimspectorSession( vim.eval( 'a:session_id' ) ).OnServerStderr(
+        \ vim.eval( 'a:data' ) )
+endfunction
+
+function! vimspector#internal#channel#StartDebugSession(
+      \ session_id,
+      \ config ) abort
+
+  if has_key( s:channels, a:session_id )
     echo 'Channel is already running'
     return v:false
   endif
 
   " If we _also_ have a command line, then start the actual job. This allows for
   " servers which start up and listen on some port
-  if has_key( a:config, 'command' )
-    let s:job = job_start( a:config[ 'command' ],
+  if has_key( a:config, 'command' ) && !get( a:config, 'tty', 0 )
+    let s:jobs[ a:session_id ] = job_start( a:config[ 'command' ],
           \                {
           \                    'in_mode': 'raw',
           \                    'out_mode': 'raw',
           \                    'err_mode': 'raw',
           \                    'stoponexit': 'term',
+          \                    'out_cb': funcref( 's:_OnJobStdErr',
+          \                                       [ a:session_id ] ),
+          \                    'err_cb': funcref( 's:_OnJobStdErr',
+          \                                        [ a:session_id ] ),
           \                    'env': a:config[ 'env' ],
           \                    'cwd': a:config[ 'cwd' ],
           \                }
           \              )
   endif
 
-  let l:addr = get( a:config, 'host', 'localhost' ) . ':' . a:config[ 'port' ]
+  let l:addr = get( a:config, 'host', '127.0.0.1' ) . ':' . a:config[ 'port' ]
 
-  echo 'Connecting to ' . l:addr . '... (waiting fo up to 10 seconds)'
-  let s:ch = ch_open( l:addr,
+  echo 'Connecting to ' . l:addr . '... (waiting for up to 10 seconds)'
+  " FIXME: This _always_ waits 10s; the neochannel version is quicker
+  let s:channels[ a:session_id ] = ch_open( l:addr,
         \             {
         \                 'mode': 'raw',
-        \                 'callback': funcref( 's:_OnServerData' ),
-        \                 'close_cb': funcref( 's:_OnClose' ),
+        \                 'callback': funcref( 's:_OnServerData',
+        \                                       [ a:session_id ] ),
+        \                 'close_cb': funcref( 's:_OnClose',
+        \                                      [ a:session_id ] ),
         \                 'waittime': 10000,
         \             }
         \           )
 
-  if ch_status( s:ch ) !=# 'open'
+  if ch_status( s:channels[ a:session_id ] ) !=# 'open'
+    call remove( s:channels, a:session_id )
+
     echom 'Unable to connect to' l:addr
     redraw
     return v:false
@@ -83,39 +114,75 @@ function! vimspector#internal#channel#StartDebugSession( config ) abort
   return v:true
 endfunction
 
-function! vimspector#internal#channel#Send( msg ) abort
-  call ch_sendraw( s:ch, a:msg )
-  return 1
+function! vimspector#internal#channel#Send( session_id, msg ) abort
+  try
+    call ch_sendraw( s:channels[ a:session_id ], a:msg )
+    return 1
+  catch /E631/
+    " Channel is closed
+    return 0
+  catch /E906/
+    " Channel is closed
+    return 0
+  endtry
 endfunction
 
-function! vimspector#internal#channel#Timeout( id ) abort
-  py3 << EOF
-_vimspector_session.OnRequestTimeout( vim.eval( 'a:id' ) )
-EOF
+function! vimspector#internal#channel#Timeout( session_id, id ) abort
+  py3 _VimspectorSession( vim.eval( 'a:session_id' ) ).OnRequestTimeout(
+        \ vim.eval( 'a:id' ) )
 endfunction
 
-function! vimspector#internal#channel#StopDebugSession() abort
-  if exists( 's:ch' ) && ch_status( s:ch ) ==# 'open'
+function! s:_ChannelExists( session_id ) abort
+  return has_key( s:channels, a:session_id ) &&
+          \ count( [ 'closed', 'fail' ],
+          \        ch_status( s:channels[ a:session_id ] ) ) == 0
+endfunction
+
+function! vimspector#internal#channel#StopDebugSession( session_id ) abort
+
+  if has_key( s:jobs, a:session_id )
+    " We started the job, so we need to kill it and wait to read all the data
+    " from the socket
+
+    let job = s:jobs[ a:session_id ]
+    if job_status( job ) ==# 'run'
+      call job_stop( job, 'term' )
+    endif
+
+    while job_status( job ) ==# 'run'
+      call job_stop( job, 'kill' )
+    endwhile
+
+    call remove( s:jobs, a:session_id )
+
+    if s:_ChannelExists( a:session_id )
+      " We're going to block on this channel reading, then manually call the
+      " close callback, so remove the automatic close callback to avoid tricky
+      " re-entrancy
+      call ch_setoptions( s:channels[ a:session_id ], { 'close_cb': '' } )
+    endif
+  elseif s:_ChannelExists( a:session_id )
     " channel is open, close it and trigger the callback. The callback is _not_
     " triggered when manually calling ch_close. if we get here and the channel
     " is not open, then we there is a _OnClose callback waiting for us, so do
     " nothing.
-    call ch_close( s:ch )
-    call s:_OnClose( s:ch )
+    call ch_close( s:channels[ a:session_id ] )
   endif
 
-  if exists( 's:job' )
-    if job_status( s:job ) ==# 'run'
-      call job_stop( s:job, 'kill' )
-    endif
-    unlet s:job
+  " block until we've read all data from the socket and handled it.
+  while has_key( s:channels, a:session_id ) &&
+        \ count( [ 'open', 'buffered' ],
+        \       ch_status( s:channels[ a:session_id ] ) ) == 1
+    let data = ch_read( s:channels[ a:session_id ], { 'timeout': 10 } )
+    call s:_OnServerData( a:session_id, s:channels[ a:session_id ], data )
+  endwhile
+  if has_key( s:channels, a:session_id )
+    call s:_OnClose( a:session_id, s:channels[ a:session_id ] )
   endif
 endfunction
 
-function! vimspector#internal#channel#Reset() abort
-  if exists( 's:ch' ) || exists( 's:job' )
-    call vimspector#internal#channel#StopDebugSession()
-  endif
+function! vimspector#internal#channel#Reset( session_id ) abort
+  call vimspector#internal#channel#StopDebugSession( a:session_id )
 endfunction
 
 " Boilerplate {{{

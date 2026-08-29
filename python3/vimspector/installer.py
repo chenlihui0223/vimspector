@@ -57,32 +57,32 @@ def Print( *args, **kwargs ):
     print( *args, **kwargs )
 
 
-def CheckCall( *args, **kwargs ):
-  if options.quiet:
-    try:
-      subprocess.check_output( *args, stderr=subprocess.STDOUT, **kwargs )
-    except subprocess.CalledProcessError as e:
-      print( e.output.decode( 'utf-8' ) )
-      raise
-  else:
-    subprocess.check_call( *args, **kwargs )
+class MissingExecutable( Exception ):
+  pass
 
 
-def PathToAnyWorkingPython3():
-  # We can't rely on sys.executable because it's usually 'vim' (fixme, not with
-  # neovim?)
+def GetPATHAsList():
   paths = os.environ[ 'PATH' ].split( os.pathsep )
-
   if install.GetOS() == 'windows':
     paths.insert( 0, os.getcwd() )
-    candidates = [ os.path.join( sys.exec_prefix, 'python.exe' ),
-                   'python.exe' ]
-  else:
-    candidates = [ os.path.join( sys.exec_prefix, 'bin', 'python3' ),
-                   'python3',
-                   'python' ]
+  return paths
 
-  for candidate in candidates:
+
+def FindExecutable( executable: str, paths=None ):
+  if not paths:
+    paths = GetPATHAsList()
+
+  if install.GetOS() == 'windows':
+    extensions = [ '.exe', '.bat', '.cmd' ]
+  else:
+    extensions = [ '' ]
+
+  for extension in extensions:
+    if executable.endswith( extension ):
+      candidate = executable
+    else:
+      candidate = executable + extension
+
     for path in paths:
       filename = os.path.abspath( os.path.join( path, candidate ) )
       if not os.path.isfile( filename ):
@@ -91,6 +91,42 @@ def PathToAnyWorkingPython3():
         continue
 
       return filename
+
+  raise MissingExecutable( f"Unable to find executable { executable } in path" )
+
+
+
+def CheckCall( cmd, *args, **kwargs ):
+  cmd[ 0 ] = FindExecutable( cmd[ 0 ] )
+
+  if options.quiet:
+    try:
+      subprocess.check_output( cmd, *args, stderr=subprocess.STDOUT, **kwargs )
+    except subprocess.CalledProcessError as e:
+      print( e.output.decode( 'utf-8' ) )
+      raise
+  else:
+    subprocess.check_call( cmd, *args, **kwargs )
+
+
+def PathToAnyWorkingPython3():
+  # We can't rely on sys.executable because it's usually 'vim' (fixme, not with
+  # neovim?)
+  paths = GetPATHAsList()
+
+  if install.GetOS() == 'windows':
+    candidates = [ os.path.join( sys.exec_prefix, 'python.exe' ),
+                   'python.exe' ]
+  else:
+    candidates = [ os.path.join( sys.exec_prefix, 'bin', 'python3' ),
+                   'python3',
+                   'python' ]
+
+  for candidate in candidates:
+    try:
+      return FindExecutable( candidate, paths=paths )
+    except MissingExecutable:
+      pass
 
   raise RuntimeError( "Unable to find a working python3" )
 
@@ -114,7 +150,7 @@ def RunInstaller( api_prefix, leave_open, *args, **kwargs ):
   _ResetInstaller()
 
   with utils.RestoreCurrentWindow():
-    vim.command( f'botright { settings.Int( "bottombar_height", 10 ) }new' )
+    vim.command( f'botright { settings.Int( "bottombar_height" ) }new' )
     win = vim.current.window
     OUTPUT_VIEW = output.OutputView( win, api_prefix )
 
@@ -164,6 +200,14 @@ def RunUpdate( api_prefix, leave_open, *args ):
   if insatller_args:
     insatller_args.append( '--upgrade' )
     RunInstaller( api_prefix, leave_open, *insatller_args )
+  else:
+    utils.UserMessage(
+      "Can't update: No gadgets are currently installed, "
+      "and none configured to be installed.",
+      persist=True,
+      error=True )
+    import vim
+    vim.command( 'silent doautocmd User VimspectorInstallFailed' )
 
 
 def _ResetInstaller():
@@ -193,10 +237,14 @@ def GadgetListToInstallerArgs( *gadget_list ):
     except KeyError:
       continue
 
+    lang = gadget[ "language" ]
+    if isinstance( lang, list ):
+      lang = lang[ 0 ]
+
     if not gadget.get( 'enabled', True ):
-      installer_args.append( f'--force-enable-{ gadget[ "language" ] }' )
+      installer_args.append( f'--force-enable-{lang}' )
     else:
-      installer_args.append( f'--enable-{ gadget[ "language" ] }' )
+      installer_args.append( f'--enable-{lang}' )
 
   return installer_args
 
@@ -207,6 +255,7 @@ def FindGadgetForAdapter( adapter_name ):
     v = {}
     v.update( gadget.get( 'all', {} ) )
     v.update( gadget.get( install.GetOS(), {} ) )
+    v.update( gadget.get( install.GetOSPlatform(), {} ) )
 
     adapters = {}
     adapters.update( v.get( 'adapters', {} ) )
@@ -304,11 +353,12 @@ def WriteAdapters( all_adapters, to_file=None ):
 
 
 def InstallGeneric( name, root, gadget ):
-  extension = os.path.join( root, 'extension' )
+  extension_path = gadget.get( 'extension_path', 'extension' )
+  extension = os.path.join( root, extension_path )
   for f in gadget.get( 'make_executable', [] ):
     MakeExecutable( os.path.join( extension, f ) )
 
-  MakeExtensionSymlink( name, root )
+  MakeExtensionSymlink( name, root, extension_path )
 
 
 def InstallCppTools( name, root, gadget ):
@@ -317,15 +367,29 @@ def InstallCppTools( name, root, gadget ):
   # It's hilarious, but the execute bits aren't set in the vsix. So they
   # actually have javascript code which does this. It's just a horrible horrible
   # hack that really is not funny.
-  MakeExecutable( os.path.join( extension, 'debugAdapters', 'OpenDebugAD7' ) )
-  with open( os.path.join( extension, 'package.json' ) ) as f:
-    package = json.load( f )
-    runtime_dependencies = package[ 'runtimeDependencies' ]
-    for dependency in runtime_dependencies:
-      for binary in dependency.get( 'binaries' ):
-        file_path = os.path.abspath( os.path.join( extension, binary ) )
-        if os.path.exists( file_path ):
-          MakeExecutable( os.path.join( extension, binary ) )
+  for binary in [ 'OpenDebugAD7', 'OpenDebugAD7.exe' ]:
+    path = os.path.join( extension, 'debugAdapters', 'bin', binary )
+    if os.path.exists( path ):
+      MakeExecutable( path )
+
+  # See makeBinariesExecutable from the cpptools extension code:
+  # https://github.com/microsoft/vscode-cpptools/blob/main/Extension/src/main.ts#L97
+
+  if install.GetOS() == 'macos':
+    MakeExecutable( os.path.join( extension,
+                                  'debugAdapters',
+                                  'lldb-mi',
+                                  'bin',
+                                  'lldb-mi' ) )
+    if install.GetPlatform() == 'x86_64':
+      for binary in [ "debugserver",
+                      "lldb-mi",
+                      "lldb-argdumper",
+                      "lldb-launcher" ]:
+        MakeExecutable( os.path.join( extension,
+                                      'debugAdapters',
+                                      'bin',
+                                      binary ) )
 
   MakeExtensionSymlink( name, root )
 
@@ -340,7 +404,30 @@ def InstallDebugpy( name, root, gadget ):
   root = os.path.join( root, 'debugpy-{}'.format( gadget[ 'version' ] ) )
   os.chdir( root )
   try:
-    CheckCall( [ sys.executable, 'setup.py', 'build' ] )
+    PYDEVD_ATTACH_TO_PROCESS = os.path.join( root,
+                                             'src',
+                                             'debugpy',
+                                             '_vendored',
+                                             'pydevd',
+                                             'pydevd_attach_to_process' )
+    if install.GetOS() == 'windows':
+      CheckCall( [ os.path.join( PYDEVD_ATTACH_TO_PROCESS,
+                                 'windows',
+                                 'compile_windows.bat' ) ] )
+    elif install.GetOS() == 'macos':
+      CheckCall( [ '/bin/sh', os.path.join( PYDEVD_ATTACH_TO_PROCESS,
+                                            'linux_and_mac',
+                                            'compile_mac.sh' ) ] )
+    else:
+      CheckCall( [ '/bin/sh', os.path.join( PYDEVD_ATTACH_TO_PROCESS,
+                                            'linux_and_mac',
+                                            'compile_linux.sh' ) ] )
+
+    CheckCall( [ sys.executable,
+                 'setup.py',
+                 'build',
+                 '--build-platlib', os.path.join( 'build', 'lib' ) ] )
+
   finally:
     os.chdir( wd )
 
@@ -348,7 +435,7 @@ def InstallDebugpy( name, root, gadget ):
 
 
 def InstallTclProDebug( name, root, gadget ):
-  configure = [ './configure' ]
+  configure = [ 'sh', './configure' ]
 
   if install.GetOS() == 'macos':
     # Apple removed the headers from system frameworks because they are
@@ -369,10 +456,15 @@ def InstallTclProDebug( name, root, gadget ):
     #    '/MacOSX.platform/Developer/SDKs/MacOSX.sdk/System'
     #    '/Library/Frameworks/Tcl.framework/Versions'
     #    '/Current',
-    for p in [ '/usr/local/opt/tcl-tk/lib' ]:
-      if os.path.exists( os.path.join( p, 'tclConfig.sh' ) ):
-        configure.append( '--with-tcl=' + p )
-        break
+    for tcl in [ "tcl-tk@8", "tcl-tk" ]:
+      for p in [ f'/usr/local/opt/{tcl}/lib', f'/opt/homebrew/opt/{tcl}/lib' ]:
+        if os.path.exists( os.path.join( p, 'tclConfig.sh' ) ):
+          Print( f"Found tclConfig.sh in {p}" )
+          configure.append( '--with-tcl=' + p )
+          break
+      else:
+        continue
+      break
 
 
   with CurrentWorkingDir( os.path.join( root, 'lib', 'tclparser' ) ):
@@ -389,7 +481,44 @@ def InstallNodeDebug( name, root, gadget ):
   MakeSymlink( name, root )
 
 
-def InstallGagdet( name: str,
+def InstallLuaLocal( name, root, gadget ):
+  with CurrentWorkingDir( root ):
+    CheckCall( [ 'npm', 'install' ] )
+    CheckCall( [ 'npm', 'run', 'build' ] )
+  MakeSymlink( name, root )
+
+
+def InstallDelve( name, root, spec ):
+  if not os.path.isdir( root ):
+    os.makedirs( root )
+
+  with CurrentWorkingDir( root ):
+    env = os.environ.copy()
+
+    env[ 'GO111MODULE' ] = 'on'
+    env.pop( 'GOROOT', None )
+    env[ 'GOPATH' ] = root
+    env[ 'GOBIN' ] = os.path.join( env[ 'GOPATH' ], 'bin' )
+
+    # This requires go 1.14
+    # env[ 'GOFLAGS' ] = env.get( 'GOFLAGS', '' ) + ' -modcacherw'
+
+    try:
+      CheckCall( [ 'go',
+                   'install',
+                   spec[ 'path' ] + '@v' + spec[ 'version' ] ],
+                 env=env )
+    except subprocess.CalledProcessError:
+      # try again with go get for go < 1.16
+      CheckCall( [ 'go',
+                   'get',
+                   spec[ 'path' ] + '@v' + spec[ 'version' ] ],
+                 env=env )
+
+  MakeSymlink( name, root )
+
+
+def InstallGadget( name: str,
                    gadget: dict,
                    manifest: Manifest,
                    succeeded: list,
@@ -401,6 +530,7 @@ def InstallGagdet( name: str,
     spec = {}
     spec.update( gadget.get( 'all', {} ) )
     spec.update( gadget.get( install.GetOS(), {} ) )
+    spec.update( gadget.get( install.GetOSPlatform(), {} ) )
 
     def save_adapters():
       # allow per-os adapter overrides. v already did that for us...
@@ -410,8 +540,8 @@ def InstallGagdet( name: str,
 
     if 'download' in gadget:
       if 'file_name' not in spec:
-        raise RuntimeError( "Unsupported OS {} for gadget {}".format(
-          install.GetOS(),
+        raise RuntimeError( "Unsupported OS/platform {} for gadget {}".format(
+          install.GetOSPlatform(),
           name ) )
 
       print( f"Installing {name}@{spec[ 'version' ]}..." )
@@ -445,7 +575,7 @@ def InstallGagdet( name: str,
       url = string.Template( gadget[ 'repo' ][ 'url' ] ).substitute( spec )
       ref = string.Template( gadget[ 'repo' ][ 'ref' ] ).substitute( spec )
 
-      print( f"Installing {name}@{gadget[ 'repo' ][ 'ref' ]}..." )
+      print( f"Installing {name}@{ref}..." )
       spec[ 'repo' ] = gadget[ 'repo' ]
       if not manifest.RequiresUpdate( name, spec ):
         save_adapters()
@@ -458,11 +588,22 @@ def InstallGagdet( name: str,
         name )
       CloneRepoTo( url, ref, destination )
       root = destination
+    else:
+      root = os.path.join(
+        install.GetGadgetDir( options.vimspector_base ),
+        'download',
+        name )
 
+    model = gadget.get( 'model', 'extension' )
     if 'do' in gadget:
       gadget[ 'do' ]( name, root, spec )
-    else:
+    elif model == 'extension':
       InstallGeneric( name, root, spec )
+    elif model == 'simple':
+      MakeSymlink( name, root )
+    else:
+      raise ValueError(
+        f"Invalid configuration - model {model} not recognised" )
 
     save_adapters()
     manifest.Update( name, spec )
@@ -487,6 +628,10 @@ def CurrentWorkingDir( d ):
 
 def MakeExecutable( file_path ):
   # TODO: import stat and use them by _just_ adding the X bit.
+  if not os.path.exists( file_path ):
+    Print( f"WARNING: Missing executable: { file_path }" )
+    return
+
   Print( 'Making executable: {}'.format( file_path ) )
   os.chmod( file_path, 0o755 )
 
@@ -656,8 +801,8 @@ def ExtractZipTo( file_path, destination, format ):
         CheckCall( [ 'tar', 'zxvf', file_path ] )
 
 
-def MakeExtensionSymlink( name, root ):
-  MakeSymlink( name, os.path.join( root, 'extension' ) ),
+def MakeExtensionSymlink( name, root, extension_path = 'extension' ):
+  MakeSymlink( name, os.path.join( root, extension_path ) ),
 
 
 def MakeSymlink( link, pointing_to, in_folder = None ):

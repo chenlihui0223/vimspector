@@ -13,6 +13,17 @@
 " See the License for the specific language governing permissions and
 " limitations under the License.
 
+if !has( 'python3' )
+  augroup VimspectorNoPython
+    autocmd!
+    autocmd VimEnter *
+          \   echohl WarningMsg
+          \ | echom 'Vimspector unavailable: Requires Vim compiled with +python3'
+          \ | echohl None
+  augroup END
+  finish
+endif
+
 " Boilerplate {{{
 let s:save_cpo = &cpoptions
 set cpoptions&vim
@@ -28,18 +39,27 @@ if exists( 'g:loaded_vimpector' )
 endif
 "}}}
 
-" TODO:
-"   - Check Vim version (for jobs)
-"   - Check python support
-"   - Add commands/mappings/menus?
-
 let g:loaded_vimpector = 1
 let g:vimspector_home = expand( '<sfile>:p:h:h' )
 
 let s:mappings = get( g:, 'vimspector_enable_mappings', '' )
 
+" Let the <Plug>mapping can be repeated with the "." command, it's powered by
+" [repeat.vim](https://github.com/tpope/vim-repeat).
+function! s:SetRepeat( map ) abort
+  try
+    call repeat#set( a:map )
+  catch /^Vim\%((\a\+)\)\=:E117:/
+    " Catch 'E117: Unknown function' exception if the user doesn't have the
+    " 'repeat.vim' installed.
+  endtry
+endfunction
+
 nnoremap <silent> <Plug>VimspectorContinue
-      \ :<c-u>call vimspector#Continue()<CR>
+      \ :<c-u>call <SID>SetRepeat( "\<Plug>VimspectorContinue" )<CR>
+      \:<c-u>call vimspector#Continue()<CR>
+nnoremap <silent> <Plug>VimspectorLaunch
+      \ :<c-u>call vimspector#Launch( v:true )<CR>
 nnoremap <silent> <Plug>VimspectorStop
       \ :<c-u>call vimspector#Stop()<CR>
 nnoremap <silent> <Plug>VimspectorRestart
@@ -47,56 +67,126 @@ nnoremap <silent> <Plug>VimspectorRestart
 nnoremap <silent> <Plug>VimspectorPause
       \ :<c-u>call vimspector#Pause()<CR>
 nnoremap <silent> <Plug>VimspectorToggleBreakpoint
-      \ :<c-u>call vimspector#ToggleBreakpoint()<CR>
+      \ :<c-u>call <SID>SetRepeat( "\<Plug>VimspectorToggleBreakpoint" )<CR>
+      \:<c-u>call vimspector#ToggleBreakpoint()<CR>
 nnoremap <silent> <Plug>VimspectorToggleConditionalBreakpoint
-      \ :<c-u>call vimspector#ToggleBreakpoint(
-                    \ { 'condition': input( 'Enter condition expression: ' ),
-                    \   'hitCondition': input( 'Enter hit count expression: ' ) }
-                    \ )<CR>
+      \ :<c-u>call <SID>SetRepeat( "\<Plug>VimspectorToggleConditionalBreakpoint" )<CR>
+      \:<c-u>call vimspector#ToggleAdvancedBreakpoint()<CR>
 nnoremap <silent> <Plug>VimspectorAddFunctionBreakpoint
-      \ :<c-u>call vimspector#AddFunctionBreakpoint( expand( '<cexpr>' ) )<CR>
+      \ :<c-u>call <SID>SetRepeat( "\<Plug>VimspectorAddFunctionBreakpoint" )<CR>
+      \:<c-u>call vimspector#AddFunctionBreakpoint( expand( '<cexpr>' ) )<CR>
 nnoremap <silent> <Plug>VimspectorStepOver
-      \ :<c-u>call vimspector#StepOver()<CR>
+      \ :<c-u>call <SID>SetRepeat( "\<Plug>VimspectorStepOver" )<CR>
+      \:<c-u>call vimspector#StepOver()<CR>
 nnoremap <silent> <Plug>VimspectorStepInto
-      \ :<c-u>call vimspector#StepInto()<CR>
+      \ :<c-u>call <SID>SetRepeat( "\<Plug>VimspectorStepInto" )<CR>
+      \:<c-u>call vimspector#StepInto()<CR>
 nnoremap <silent> <Plug>VimspectorStepOut
-      \ :<c-u>call vimspector#StepOut()<CR>
+      \ :<c-u>call <SID>SetRepeat( "\<Plug>VimspectorStepOut" )<CR>
+      \:<c-u>call vimspector#StepOut()<CR>
+
+nnoremap <silent> <Plug>VimspectorRunToCursor
+      \ :<c-u>call <SID>SetRepeat( "\<Plug>VimspectorRunToCursor" )<CR>
+      \:<c-u>call vimspector#RunToCursor()<CR>
+nnoremap <silent> <Plug>VimspectorGoToCurrentLine
+      \ :<c-u>call <SID>SetRepeat( "\<Plug>VimspectorGoToCurrentLine" )<CR>
+      \:<c-u>call vimspector#GoToCurrentLine()<CR>
+
+" Eval for normal mode
+nnoremap <silent> <Plug>VimspectorBalloonEval
+      \ :<c-u>call <SID>SetRepeat( "\<Plug>VimspectorBalloonEval" )<CR>
+      \:<c-u>call vimspector#ShowEvalBalloon( 0 )<CR>
+" And for visual modes
+xnoremap <silent> <Plug>VimspectorBalloonEval
+      \ :<c-u>call <SID>SetRepeat( "\<Plug>VimspectorBalloonEval" )<CR>
+      \:<c-u>call vimspector#ShowEvalBalloon( 1 )<CR>
+nnoremap <silent> <Plug>VimspectorUpFrame
+      \ :<c-u>call <SID>SetRepeat( "\<Plug>VimspectorUpFrame" )<CR>
+      \:<c-u>call vimspector#UpFrame()<CR>
+nnoremap <silent> <Plug>VimspectorDownFrame
+      \ :<c-u>call <SID>SetRepeat( "\<Plug>VimspectorDownFrame" )<CR>
+      \:<c-u>call vimspector#DownFrame()<CR>
+nnoremap <silent> <Plug>VimspectorJumpToNextBreakpoint
+      \ :<c-u>call <SID>SetRepeat( "\<Plug>VimspectorJumpToNextBreakpoint" )<CR>
+      \ :<c-u>call vimspector#JumpToNextBreakpoint()<CR>
+nnoremap <silent> <Plug>VimspectorJumpToPreviousBreakpoint
+      \ :<c-u>call <SID>SetRepeat( "\<Plug>VimspectorJumpToPreviousBreakpoint" )<CR>
+      \ :<c-u>call vimspector#JumpToPreviousBreakpoint()<CR>
+nnoremap <silent> <Plug>VimspectorJumpToProgramCounter
+      \ :<c-u>call vimspector#JumpToProgramCounter()<CR>
+
+nnoremap <silent> <Plug>VimspectorBreakpoints
+      \ :<c-u>call vimspector#ListBreakpoints()<CR>
+nnoremap <silent> <Plug>VimspectorDisassemble
+      \ :<c-u>call vimspector#ShowDisassembly()<CR>
 
 if s:mappings ==# 'VISUAL_STUDIO'
   nmap <F5>         <Plug>VimspectorContinue
   nmap <S-F5>       <Plug>VimspectorStop
   nmap <C-S-F5>     <Plug>VimspectorRestart
   nmap <F6>         <Plug>VimspectorPause
+  nmap <F8>         <Plug>VimspectorJumpToNextBreakpoint
+  nmap <S-F8>       <Plug>VimspectorJumpToPreviousBreakpoint
   nmap <F9>         <Plug>VimspectorToggleBreakpoint
   nmap <S-F9>       <Plug>VimspectorAddFunctionBreakpoint
   nmap <F10>        <Plug>VimspectorStepOver
+  nmap <C-F10>      <Plug>VimspectorRunToCursor
   nmap <F11>        <Plug>VimspectorStepInto
   nmap <S-F11>      <Plug>VimspectorStepOut
+  nmap <M-8>        <Plug>VimspectorDisassemble
 elseif s:mappings ==# 'HUMAN'
   nmap <F5>         <Plug>VimspectorContinue
+  nmap <leader><F5> <Plug>VimspectorLaunch
   nmap <F3>         <Plug>VimspectorStop
   nmap <F4>         <Plug>VimspectorRestart
   nmap <F6>         <Plug>VimspectorPause
   nmap <F9>         <Plug>VimspectorToggleBreakpoint
   nmap <leader><F9> <Plug>VimspectorToggleConditionalBreakpoint
   nmap <F8>         <Plug>VimspectorAddFunctionBreakpoint
+  nmap <leader><F8> <Plug>VimspectorRunToCursor
   nmap <F10>        <Plug>VimspectorStepOver
   nmap <F11>        <Plug>VimspectorStepInto
   nmap <F12>        <Plug>VimspectorStepOut
 endif
 
+" Session commands
+command! -bar -nargs=?
+      \ VimspectorNewSession
+      \ call vimspector#NewSession( <f-args> )
+command! -bar -nargs=1 -complete=custom,vimspector#CompleteSessionName
+      \ VimspectorSwitchToSession
+      \ call vimspector#SwitchToSession( <f-args> )
+command! -bar -nargs=1
+      \ VimspectorRenameSession
+      \ call vimspector#RenameSession( <f-args> )
+command! -bar -nargs=1 -complete=custom,vimspector#CompleteSessionName
+      \ VimspectorDestroySession
+      \ call vimspector#DestroySession( <f-args> )
+
 command! -bar -nargs=1 -complete=custom,vimspector#CompleteExpr
       \ VimspectorWatch
       \ call vimspector#AddWatch( <f-args> )
-command! -bar -nargs=? -complete=custom,vimspector#CompleteOutput
+command! -bar -nargs=? -complete=customlist,vimspector#CompleteOutput
       \ VimspectorShowOutput
       \ call vimspector#ShowOutput( <f-args> )
-command! -bar -nargs=1 -complete=custom,vimspector#CompleteExpr
+command! -bar
+      \ VimspectorToggleLog
+      \ call vimspector#ToggleLog()
+command! -bar
+      \ VimspectorDebugInfo
+      \ call vimspector#PrintDebugInfo()
+command! -nargs=1 -complete=custom,vimspector#CompleteExpr
       \ VimspectorEval
       \ call vimspector#Evaluate( <f-args> )
 command! -bar
       \ VimspectorReset
-      \ call vimspector#Reset()
+      \ call vimspector#Reset( { 'interactive': v:true } )
+command! -bar
+      \ VimspectorBreakpoints
+      \ call vimspector#ListBreakpoints()
+command! -bar
+      \ VimspectorDisassemble
+      \ call vimspector#ShowDisassembly()
 
 " Installer commands
 command! -bar -bang -nargs=* -complete=custom,vimspector#CompleteInstall
@@ -109,16 +199,36 @@ command! -bar -nargs=0
       \ VimspectorAbortInstall
       \ call vimspector#AbortInstall()
 
+" Session files
+command! -bar -nargs=? -complete=file
+      \ VimspectorLoadSession
+      \ call vimspector#ReadSessionFile( <f-args> )
+command! -bar -nargs=? -complete=file
+      \ VimspectorMkSession
+      \ call vimspector#WriteSessionFile( <f-args> )
 
 
 " Dummy autocommands so that we can call this whenever
 augroup VimspectorUserAutoCmds
-  au!
-  au User VimspectorUICreated      silent
-  au User VimspectorTerminalOpened silent
+  autocmd!
+  autocmd User VimspectorUICreated      silent
+  autocmd User VimspectorTerminalOpened silent
+  autocmd user VimspectorJumpedToFrame  silent
+  autocmd user VimspectorDebugEnded     silent
+augroup END
+
+" FIXME: Only register this _while_ debugging is active
+let g:vimspector_resetting = 0
+augroup Vimspector
+  autocmd!
+  autocmd BufNew * call vimspector#OnBufferCreated( expand( '<afile>' ) )
+  autocmd TabClosed *
+        \   if !g:vimspector_resetting
+        \ |   call vimspector#internal#state#TabClosed( expand( '<afile>' ) )
+        \ | endif
+  autocmd TabEnter * call vimspector#internal#state#OnTabEnter()
 augroup END
 
 " boilerplate {{{
 call s:restore_cpo()
 " }}}
-

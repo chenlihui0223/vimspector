@@ -3,7 +3,7 @@
 " Errors are appended to the test.log file.
 "
 " To execute only specific test functions, add a second argument.  It will be
-" matched against the names of the Test_ funtion.  E.g.:
+" matched against the names of the Test_ function.  E.g.:
 "	../vim -Nu NONE vimrc -S lib/run_test.vim test_channel.vim open_delay
 " The output can be found in the "messages" file.
 "
@@ -32,8 +32,17 @@
 "   call ch_log( ",,,message..." )
 " Then view it in 'debuglog'
 
+" This prevents inputsave()/inputrestore() when asking for input, which allows
+" the tests to use feedkeys() to enter the info.
+let g:vimspector_batch_mode = 1
+
 " Let a test take up to 1 minute, unless debugging
 let s:single_test_timeout = 60000
+
+" Timeouts in milliseconds
+let g:test_long_timeout = 15000
+let g:test_timeout = 5000
+let g:test_short_timeout = 1000
 
 " Restrict the runtimepath to the exact minimum needed for testing
 let &runtimepath = getcwd() . '/lib'
@@ -42,7 +51,9 @@ if has('packages')
   let &packpath = &runtimepath
 endif
 
-call ch_logfile( 'debuglog', 'w' )
+if exists( '*ch_logfile' )
+  call ch_logfile( 'debuglog', 'w' )
+endif
 
 " For consistency run all tests with 'nocompatible' set.
 " This also enables use of line continuation.
@@ -82,6 +93,16 @@ func! Abort( timer_id )
   qa!
 endfunc
 
+func! TestLog( msg )
+  if type( a:msg ) == v:t_string
+    let msg = [ a:msg ]
+  else
+    let msg = a:msg
+  endif
+
+  call extend( s:messages, msg )
+endfunc
+
 func RunTheTest(test)
   echo 'Executing ' . a:test
 
@@ -93,7 +114,9 @@ func RunTheTest(test)
   set noshowmode
 
   " Clear any overrides.
-  call test_override('ALL', 0)
+  if exists( '*test_override' )
+    call test_override('ALL', 0)
+  endif
 
   " Some tests wipe out buffers.  To be consistent, always wipe out all
   " buffers.
@@ -101,11 +124,23 @@ func RunTheTest(test)
 
   " The test may change the current directory. Save and restore the
   " directory after executing the test.
-  let save_cwd = getcwd()
+  let s:save_cwd = getcwd()
+
+  " Used to record when a test is skipped by throwing within the SetUp handlers.
+  " This mostly allows us to skip running the test itself (at all) and to skip
+  " any teardown function too.
+  let skip_this_test=0
 
   if exists('*SetUp_' . a:test)
     try
       exe 'call SetUp_' . a:test
+    catch /^\cskipped/
+      call add(s:messages, '    Skipped')
+      call add(s:skipped,
+            \ 'SKIPPED ' . a:test
+            \ . ': '
+            \ . substitute(v:exception, '^\S*\s\+', '',  ''))
+      let skip_this_test=1
     catch
       call add(v:errors,
             \ 'Caught exception in SetUp_' . a:test . ' before '
@@ -122,6 +157,13 @@ func RunTheTest(test)
   if exists('*SetUp')
     try
       call SetUp()
+    catch /^\cskipped/
+      call add(s:messages, '    Skipped')
+      call add(s:skipped,
+            \ 'SKIPPED ' . a:test
+            \ . ': '
+            \ . substitute(v:exception, '^\S*\s\+', '',  ''))
+      let skip_this_test=1
     catch
       call add(v:errors,
             \ 'Caught exception in SetUp() before '
@@ -135,25 +177,26 @@ func RunTheTest(test)
     endtry
   endif
 
-  call add(s:messages, 'Executing ' . a:test)
-  let s:done += 1
   let timer = timer_start( s:single_test_timeout, funcref( 'Abort' ) )
 
   try
-    let s:test = a:test
-    let s:testid = g:testpath . ':' . a:test
+    if !skip_this_test
+      call add(s:messages, 'Executing ' . a:test)
+      let s:done += 1
 
-    let test_filesafe = substitute( a:test, '[)(,:]', '_', 'g' )
-    let s:testid_filesafe = g:testpath . '_' . test_filesafe
+      let s:test = a:test
+      let s:testid = g:testpath . ':' . a:test
 
-    augroup EarlyExit
-      au!
-      au VimLeavePre * call EarlyExit(s:test)
-    augroup END
+      let test_filesafe = substitute( a:test, '[)(,:]', '_', 'g' )
+      let s:testid_filesafe = g:testpath . '_' . test_filesafe
 
-    exe 'call ' . a:test
+      augroup EarlyExit
+        au!
+        au VimLeavePre * call EarlyExit(s:test)
+      augroup END
 
-    au! EarlyExit
+      exe 'call ' . a:test
+    endif
   catch /^\cskipped/
     call add(s:messages, '    Skipped')
     call add(s:skipped,
@@ -193,13 +236,16 @@ func RunTheTest(test)
     call s:TestFailed()
   endtry
 
+  au! EarlyExit
+
   call timer_stop( timer )
 
   " In case 'insertmode' was set and something went wrong, make sure it is
   " reset to avoid trouble with anything else.
   set noinsertmode
 
-  if exists('*TearDown')
+  " only perform teardown if the test was not skipped
+  if !skip_this_test && exists('*TearDown')
     try
       call TearDown()
     catch
@@ -214,7 +260,7 @@ func RunTheTest(test)
     endtry
   endif
 
-  if exists('*TearDown_' . a:test)
+  if !skip_this_test && exists('*TearDown_' . a:test)
     try
       exe 'call TearDown_' . a:test
     catch
@@ -250,7 +296,7 @@ func RunTheTest(test)
     endif
   endwhile
 
-  exe 'cd ' . save_cwd
+  exe 'cd ' . s:save_cwd
 endfunc
 
 func AfterTheTest()
@@ -271,6 +317,7 @@ endfunc
 
 " This function can be called by a test if it wants to abort testing.
 func FinishTesting()
+  exe 'cd ' . s:save_cwd
   call AfterTheTest()
 
   " Don't write viminfo on exit.
@@ -344,12 +391,6 @@ catch
         \ ' @ ' . v:throwpoint)
 endtry
 
-" Names of flaky tests.
-let s:flaky_tests = []
-
-" Pattern indicating a common flaky test failure.
-let s:flaky_errors_re = '__does_not_match__'
-
 " Locate Test_ functions and execute them.
 redir @q
 silent function /^Test_
@@ -367,6 +408,29 @@ for s:test in sort(s:tests)
   set belloff=all
 
   call RunTheTest(s:test)
+
+  " Repeat a flaky test.  Give up when:
+  " - $TEST_NO_RETRY is not empty
+  " - $TEST_NO_RETRY is not 0
+  " - it fails five times
+  if len(v:errors) > 0
+        \ && ( $TEST_NO_RETRY == '' || $TEST_NO_RETRY == '0' )
+    for retry in range( 10 )
+      call add( s:messages, 'Found errors in ' . s:test . '. Retrying.' )
+      call extend( s:messages, v:errors )
+
+      sleep 2
+
+      let v:errors = []
+      call RunTheTest(s:test)
+
+      if len(v:errors) == 0
+        " Test passed on rerun.
+        break
+      endif
+    endfor
+  endif
+
   call AfterTheTest()
 endfor
 
